@@ -7,7 +7,7 @@ import torch.nn as nn
 #     from torch_points import knn
 # except (ModuleNotFoundError, ImportError):
 from torch_points_kernels import knn
-
+from utils.tools import DataProcessing
 class SharedMLP(nn.Module):
     def __init__(
         self,
@@ -183,12 +183,12 @@ class LocalFeatureAggregation(nn.Module):
 
 
 
-class RandLANet(nn.Module):
-    def __init__(self, d_in, num_classes, num_neighbors=16, decimation=4):
-        super(RandLANet, self).__init__()
+class SQN(nn.Module):
+    def __init__(self, d_in, num_classes, is_training, num_neighbors=16, decimation=4):
+        super(SQN, self).__init__()
         self.num_neighbors = num_neighbors
         self.decimation = decimation
-
+        self.is_training = is_training
         self.fc_start = nn.Linear(d_in, 8)
         self.bn_start = nn.Sequential(
             nn.BatchNorm2d(8, eps=1e-6, momentum=0.99),
@@ -240,59 +240,85 @@ class RandLANet(nn.Module):
             torch.Tensor, shape (B, num_classes, N)
                 segmentation scores for each point
         """
-        N = input.size(1)
+        N = input['points'].size(1)
         d = self.decimation
+        feature = input['points']
+        batch_anno_xyz = input['batch_anno_xyz'].clone()
 
-        coords = input[...,:3].clone()
-        x = self.fc_start(input).transpose(-2,-1).unsqueeze(-1)
-        x = self.bn_start(x) # shape (B, d, N, 1)
+        feature = torch.where(self.is_training,
+                              lambda: torch.cat([feature, DataProcessing.data_augment(feature)], dim=0),
+                              lambda: feature
+                              )
+        batch_anno_xyz = torch.where(self.is_training,
+                                     lambda: torch.cat([batch_anno_xyz, batch_anno_xyz], dim=0),
+                                     lambda: batch_anno_xyz
+                                     )
+        coords = feature[...,:3]
+        coords = torch.where(self.is_training,
+                             lambda: torch.cat([coords, coords], dim=0),
+                             lambda: coords
+                             )
+
+        feature = self.fc_start(feature).transpose(-2,-1).unsqueeze(-1)
+        feature = self.bn_start(feature) # shape (B, d, N, 1)
 
         decimation_ratio = 1
 
         # <<<<<<<<<< ENCODER
-        x_stack = []
-
+        # f_encoder_list = []
+        f_interp = []
         permutation = torch.randperm(N)
         coords = coords[:,permutation]
         x = x[:,:,permutation]
 
         for lfa in self.encoder:
             # at iteration i, x.shape = (B, N//(d**i), d_in)
-            x = lfa(coords[:,:N//decimation_ratio], x)
-            x_stack.append(x.clone())
+            feature = lfa(coords[:,:N//decimation_ratio], feature)
+            # f_encoder_list.append(feature)
+            # feature_stack.append(feature.clone())
             decimation_ratio *= d
-            x = x[:,:,:N//decimation_ratio]
+            feature = feature[:,:,:N//decimation_ratio]
 
+            # ###########################Semantic Query############################
+            idx, _ = knn(coords, batch_anno_xyz, 3)
+            neighbor_xyz = DataProcessing.gather_neighbour(coords, idx)
+            xyz_tile = torch.tile(torch.unsqueeze(batch_anno_xyz, dim=2), (1, 1, idx.shape[-1], 1))
+            relative_xyz = xyz_tile - neighbor_xyz
+            dist = torch.sum(torch.square(relative_xyz), dim=-1, keepdim=False)
+            weight = torch.ones_like(dist) / 3.0
+            interpolated_points = three_interpolate(torch.squeeze(feature, dim=2), idx, weight)
+            f_interp.append(interpolated_points)
 
-        # # >>>>>>>>>> ENCODER
+        # # # >>>>>>>>>> ENCODER
 
-        x = self.mlp(x)
+        # x = self.mlp(x)
 
         # <<<<<<<<<< DECODER
+        interpolated_points  = torch.cat(f_interp, dim=-1)
         for mlp in self.decoder:
-            neighbors, _ = knn(
-                coords[:,:N//decimation_ratio].cpu().contiguous(), # original set
-                coords[:,:d*N//decimation_ratio].cpu().contiguous(), # upsampled set
-                1
-            ) # shape (B, N, 1)
+            # neighbors, _ = knn(
+            #     coords[:,:N//decimation_ratio].cpu().contiguous(), # original set
+            #     coords[:,:d*N//decimation_ratio].cpu().contiguous(), # upsampled set
+            #     1
+            # ) # shape (B, N, 1)
 
-            extended_neighbors = neighbors.unsqueeze(1).expand(-1, x.size(1), -1, 1)
+            # extended_neighbors = neighbors.unsqueeze(1).expand(-1, x.size(1), -1, 1)
 
-            x_neighbors = torch.gather(x.cpu(), -2, extended_neighbors)
+            # x_neighbors = torch.gather(x.cpu(), -2, extended_neighbors)
 
-            temp = x_stack.pop()
-            x_neighbors = x_neighbors.to(temp)
-            x = torch.cat((x_neighbors, temp), dim=1)
+            # temp = x_stack.pop()
+            # x_neighbors = x_neighbors.to(temp)
+            # x = torch.cat((x_neighbors, temp), dim=1)
 
-            x = mlp(x)
+            interpolated_points = mlp(interpolated_points)
 
-            decimation_ratio //= d
+            # decimation_ratio //= d
 
         # >>>>>>>>>> DECODER
         # inverse permutation
-        x = x[:,:,torch.argsort(permutation)]
+        interpolated_points = interpolated_points[:,:,torch.argsort(permutation)]
 
-        scores = self.fc_end(x)
+        scores = self.fc_end(interpolated_points)
 
         return scores.squeeze(-1)
 
@@ -303,7 +329,7 @@ if __name__ == '__main__':
 
     d_in = 7
     cloud = 1000*torch.randn(1, 2**16, d_in).to(device)
-    model = RandLANet(d_in, 6, 16, 4, device)
+    model = SQN(d_in, 6, 16, 4, device)
     # model.load_state_dict(torch.load('checkpoints/checkpoint_100.pth'))
     model.eval()
 

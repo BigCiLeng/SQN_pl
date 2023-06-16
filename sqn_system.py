@@ -29,31 +29,31 @@ import time
 
 # mine
 from dataset.data import data_loaders
-from models.model import RandLANet
+from models.model import SQN
 from utils.tools import DataProcessing
 from utils.metrics import accuracy, intersection_over_union
 from utils.ply import read_ply, write_ply
-
+from tf_interpolate import three_nn, three_interpolate
 def evaluate(model, points):
     model.eval()
     with torch.no_grad():
         scores = model(points)
     return scores
 
-class RandLA_System(pl.LightningModule):
+class SQN_System(pl.LightningModule):
 
     def __init__(self, hparams):
-        super(RandLA_System, self).__init__()
+        super(SQN_System, self).__init__()
         self.save_hyperparameters()
-        # try:
-        #     with open(hparams.dataset / 'classes.json') as f:
-        #         self.labels = json.load(f)
-        #         self.num_classes = len(self.labels.keys())
-        # except FileNotFoundError:
-        #     self.num_classes = hparams.num_classes if self.hparams.num_classes is not None else int(input("Number of distinct classes in the dataset: "))
         self.num_classes = hparams.num_classes
-        self.weights = DataProcessing.get_class_weights(self.hparams['hparams'].dataset_name)
-        self.loss = nn.CrossEntropyLoss(weight=self.weights)
+
+        if self.hparams['hparams'].dataset_name in ['S3DIS', 'Semantic3D']:
+            self.loss_type = 'wce'
+        else:
+            self.loss_type = 'sqrt'
+    
+        self.weights = DataProcessing.get_class_weights(self.hparams['hparams'].dataset_name, self.loss_type)
+        self.loss = DataProcessing.get_loss
 
         self.training_step_outputs = []
         self.validation_step_outputs = []
@@ -61,7 +61,10 @@ class RandLA_System(pl.LightningModule):
         return self.model(input)
 
     def decode_batch(self, batch):
-        return batch
+        points, queried_pc_labels, queried_idx, cloud_idx, xyz_with_anno, labels_with_anno = batch
+        return {'points': points, 'queried_pc_labels': queried_pc_labels,
+                'queried_idx': queried_idx, 'cloud_idx':cloud_idx, 
+                'xyz_with_anno': xyz_with_anno, 'labels_with_anno': labels_with_anno}
 
     def get_lr(self, optimizer):
         for param_group in optimizer.param_groups:
@@ -79,9 +82,10 @@ class RandLA_System(pl.LightningModule):
             )
             tem = next(iter(self.train_loader))
             d_in = tem[0].size(-1)
-            self.model = RandLANet(
+            self.model = SQN(
                 d_in,
                 self.num_classes,
+                True,
                 num_neighbors=self.hparams['hparams'].neighbors,
                 decimation=self.hparams['hparams'].decimation,
             )
@@ -97,7 +101,7 @@ class RandLA_System(pl.LightningModule):
             )
             d_in = 6
             num_classes = self.hparams['hparams'].num_classes
-            self.model = RandLANet(d_in, num_classes, 16, 4)
+            self.model = SQN(d_in, num_classes,False, 16, 4)
     def train_dataloader(self):
         return self.train_loader
 
@@ -209,8 +213,8 @@ def train(args):
                                     save_top_k=5,
                                     )
         
-    wandb_logger = WandbLogger(project="RandLA")
-    system = RandLA_System(hparams=args)
+    wandb_logger = WandbLogger(project="SQN", name=args.name)
+    system = SQN_System(hparams=args)
     trainer = pl.Trainer(
                          logger=wandb_logger,
                          max_epochs=args.epochs,
@@ -226,7 +230,7 @@ def train(args):
     trainer.fit(system)
 
 def test(args):
-    system = RandLA_System.load_from_checkpoint(args.load)
+    system = SQN_System.load_from_checkpoint(args.load)
     trainer = pl.Trainer()
     trainer.test(system)
 
@@ -272,7 +276,11 @@ if __name__ == '__main__':
                         default=16)
     param.add_argument('--scheduler_gamma', type=float, help='gamma of the learning rate scheduler',
                         default=0.95)
-
+    param.add_argument('--labeled_point', type=str, help='0.1%/1%/10%/100%',
+                        default='0.1%')
+    param.add_argument('--retrain', type=bool, help='',
+                        default=1)
+    
     dirs.add_argument('--test_dir', type=str, help='location of the test set in the dataset dir',
                         default='test')
     dirs.add_argument('--train_dir', type=str, help='location of the training set in the dataset dir',
@@ -300,6 +308,7 @@ if __name__ == '__main__':
             args.name = args.load
         else:
             args.name = datetime.now().strftime('%Y-%m-%d_%H:%M')
+            args.name = args.name + '_' + args.dataset_name
 
     if args.work_type == 'train':
         train(args)

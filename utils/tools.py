@@ -1,3 +1,6 @@
+import torch
+import torch.nn.functional as F
+import models.Lovasz_losses as L
 from os.path import join, exists, dirname, abspath
 from helper_ply import write_ply
 from sklearn.neighbors import KDTree
@@ -567,8 +570,21 @@ class DataProcessing:
         return IoU
 
     @staticmethod
-    def get_class_weights(num_per_class, name='sqrt'):
+    def get_class_weights(dataset_name, name='sqrt'):
         # # pre-calculate the number of points in each category
+        num_per_class = []
+        if dataset_name == 'S3DIS':
+            num_per_class = np.array([3370714, 2856755, 4919229, 318158, 375640, 478001, 974733,
+                                      650464, 791496, 88727, 1284130, 229758, 2272837], dtype=np.int32)
+        elif dataset_name == 'Semantic3D':
+            num_per_class = np.array([0, 5181602, 5012952, 6830086, 1311528, 10476365, 946982, 334860, 269353],
+                                     dtype=np.int32)
+        elif dataset_name == 'SemanticKITTI':
+            num_per_class = np.array([55437630, 320797, 541736, 2578735, 3274484, 552662, 184064, 78858,
+                                      240942562, 17294618, 170599734, 6369672, 230413074, 101130274, 476491114,
+                                      9833174, 129609852, 4506626, 1168181])
+
+
         frequency = num_per_class / float(sum(num_per_class))
         if name == 'sqrt' or name == 'lovas':
             ce_label_weight = 1 / np.sqrt(frequency)
@@ -577,8 +593,81 @@ class DataProcessing:
         else:
             raise ValueError('Only support sqrt and wce')
         return np.expand_dims(ce_label_weight, axis=0)
+    @staticmethod
+    def get_loss(logits, labels, pre_cal_weights, num_classes, loss_type='sqrt'):
+        class_weights = torch.tensor(pre_cal_weights, dtype=torch.float32)
+        one_hot_labels = F.one_hot(labels.long(), num_classes=num_classes).float()
+        weights = torch.sum(class_weights * one_hot_labels, dim=1)
+        unweighted_losses = F.cross_entropy(logits, labels, reduction='none')
+        weighted_losses = unweighted_losses * weights
+        output_loss = torch.mean(weighted_losses)
 
+        if loss_type == 'lovas':
+            logits = logits.reshape(-1, num_classes)  # [-1, n_class]
+            probs = F.softmax(logits, dim=-1)  # [-1, class]
+            labels = labels.reshape(-1)
+            lovas_loss = L.lovasz_softmax(probs, labels, 'present')
+            output_loss = output_loss + lovas_loss
 
+        return output_loss
+    @staticmethod
+    def input_augment(is_training, xyz, neigh_idx, sub_idx):
+        xyz_c = torch.cat([xyz, xyz], dim=0)
+        neigh_idx_c = torch.cat([neigh_idx, neigh_idx], dim=0)
+        sub_idx_c = torch.cat([sub_idx, sub_idx], dim=0)
+        
+        
+        element = torch.where(is_training, 
+                              lambda: [xyz_c, neigh_idx_c, sub_idx_c],
+                              lambda: [xyz, neigh_idx, sub_idx]
+                              )
+        return element
+
+    @staticmethod
+    def data_augment(self, data):
+        data_xyz = data[:, :, 0:3]
+        batch_size = data_xyz.shape[0]
+        aug_option = np.random.choice([0, 1, 2])
+        if aug_option == 0:
+            # mirror
+            data_xyz = torch.stack([data_xyz[:, :, 0], -data_xyz[:, :, 1], data_xyz[:, :, 2]], 2)
+        elif aug_option == 1:
+            # rotation
+            theta = 2 * 3.14592653 * np.random.rand()
+            R = np.array([[np.cos(theta), 0, -np.sin(theta)], [0, 1, 0], [np.sin(theta), 0, np.cos(theta)]])
+            R = torch.tensor(R, dtype=torch.float32)
+            data_xyz = data_xyz.reshape(-1, 3)
+            data_xyz = torch.matmul(data_xyz, R)
+            data_xyz = data_xyz.reshape(-1, self.config.num_points, 3)
+        elif aug_option == 2:
+            # jitter
+            sigma = 0.01
+            clip = 0.05
+            jittered_point = np.clip(sigma * np.random.randn(self.config.num_points, 3), -1 * clip, clip)
+            jittered_point = np.tile(np.expand_dims(jittered_point, axis=0), [batch_size, 1, 1])
+            data_xyz = data_xyz + torch.tensor(jittered_point, torch.float32)
+        if data.shape[-1] > 3:
+            data_f = data[:, :, 3:]
+            data_aug = torch.cat([data_xyz, data_f], dim=-1)
+        else:
+            data_aug = data_xyz
+        data_aug_t = torch.transpose(data_aug, [0, 2, 1])
+        data_aug_t = data_aug_t.reshape([-1, data.get_shape()[-1].value, self.config.num_points])
+        att_activation = torch.nn.Linear(data_aug_t, 1, activation=None, use_bias=False, name='channel_attention')
+        att_activation = torch.transpose(att_activation, [0, 2, 1])
+        att_scores = torch.nn.Softmax(att_activation, dim=-1)
+        data_aug = torch.multiply(data_aug, att_scores)
+        return data_aug
+    @staticmethod
+    def gather_neighbour(pc, neighbor_idx):  # pc: batch*npoint*channel
+        # gather the coordinates or features of neighboring points
+        batch_size = pc.shape[0]
+        num_points = pc.shape[1]
+        d = pc.shape[2]
+        index_input = neighbor_idx.reshape(batch_size, -1)
+        features = torch.gather(pc, 1, index_input.unsqueeze(-1).repeat(1, 1, pc.shape[2]))
+        features = features.reshape(batch_size, num_points, neighbor_idx.shape[-1], d)  # batch*npoint*nsamples*channel
+        return features
 class Plot:
     @staticmethod
     def random_colors(N, bright=True, seed=0):

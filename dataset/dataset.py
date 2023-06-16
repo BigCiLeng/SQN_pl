@@ -10,96 +10,8 @@ import re
 # from utils.tools import Config as cfg
 from utils.tools import DataProcessing as DP
 
-# class PointCloudsDataset(Dataset):
-#     def __init__(self, dir, labels_available=True):
-#         self.paths = list(dir.glob(f'*.ply'))
-#         self.labels_available = labels_available
-
-#     def __getitem__(self, idx):
-#         path = self.paths[idx]
-
-#         points, labels = self.load_ply(path)
-
-#         points_tensor = torch.from_numpy(points).float()
-#         labels_tensor = torch.from_numpy(labels).long()
-
-#         return points_tensor, labels_tensor
-
-#     def __len__(self):
-#         return len(self.paths)
-
-#     def load_npy(self, path):
-#         r"""
-#             load the point cloud and labels of the npy file located in path
-
-#             Args:
-#                 path: str
-#                     path of the point cloud
-#                 keep_zeros: bool (optional)
-#                     keep unclassified points
-#         """
-#         cloud_npy = np.load(path, mmap_mode='r').T
-#         points = cloud_npy[:,:-1] if self.labels_available else points
-
-#         if self.labels_available:
-#             labels = cloud_npy[:,-1]
-
-#             # balance training set
-#             points_list, labels_list = [], []
-#             for i in range(len(np.unique(labels))):
-#                 try:
-#                     idx = np.random.choice(len(labels[labels==i]), 8000)
-#                     points_list.append(points[labels==i][idx])
-#                     labels_list.append(labels[labels==i][idx])
-#                 except ValueError:
-#                     continue
-#             if points_list:
-#                 points = np.stack(points_list)
-#                 labels = np.stack(labels_list)
-#                 labeled = labels>0
-#                 points = points[labeled]
-#                 labels = labels[labeled]
-
-#         return points, labels
-#     def load_ply(self, path):
-#         r"""
-#             load the point cloud and labels of the npy file located in path
-
-#             Args:
-#                 path: str
-#                     path of the point cloud
-#                 keep_zeros: bool (optional)
-#                     keep unclassified points
-#         """
-#         with open(path, 'rb') as f:
-#             plydata = PlyData.read(f)
-#         plydata = plydata['vertex'].data
-#         cloud_ply = np.array(plydata)
-#         points = cloud_ply[:,:-1] if self.labels_available else points
-
-#         if self.labels_available:
-#             labels = cloud_ply[:,-1]
-
-#             # balance training set
-#             points_list, labels_list = [], []
-#             for i in range(len(np.unique(labels))):
-#                 try:
-#                     idx = np.random.choice(len(labels[labels==i]), 8000)
-#                     points_list.append(points[labels==i][idx])
-#                     labels_list.append(labels[labels==i][idx])
-#                 except ValueError:
-#                     continue
-#             if points_list:
-#                 points = np.stack(points_list)
-#                 labels = np.stack(labels_list)
-#                 labeled = labels>0
-#                 points = points[labeled]
-#                 labels = labels[labeled]
-
-#         return points, labels
-
 class CloudsDataset(Dataset):
-    def __init__(self, dir, data_type='npy'):
+    def __init__(self, dir, labeled_point, num_points, num_classes, retrain, data_type='npy'):
         self.path = dir
         self.paths = list(dir.glob(f'*.{data_type}'))
         self.size = len(self.paths)
@@ -112,6 +24,17 @@ class CloudsDataset(Dataset):
         self.val_labels = []
         self.val_split = 'Area_6'
 
+        ### SQN
+        self.num_classes = num_classes
+        self.labeled_point = labeled_point
+        self.retrain = retrain
+        if '%' in labeled_point:
+            r = float(labeled_point[:-1]) / 100
+            self.num_with_anno_per_batch = max(int(num_points * r), 1)
+        else:
+            self.num_with_anno_per_batch = num_classes
+        self.num_per_class = np.zeros(num_classes)
+        ###
         self.load_data()
         print('Size of training : ', len(self.input_colors['training']))
         print('Size of validation : ', len(self.input_colors['validation']))
@@ -141,8 +64,47 @@ class CloudsDataset(Dataset):
             sub_colors = data[:,3:6]
             sub_labels = data[:,-1].copy()
             sub_labels = sub_labels.astype(np.int32)
-            sum0 = sum(sub_labels==0)
-            sum8 = sum(sub_labels==8)
+            
+            # compute num_per_class in training set
+            if cloud_split == 'training':
+                self.num_per_class += DP.get_num_class_from_label(sub_labels, self.num_classes)
+
+            # ======================================== #
+            #          Random Sparse Annotation        #
+            # ======================================== #
+            if cloud_split == 'training':
+                if '%' in self.labeled_point:
+                    num_pts = len(sub_labels)
+                    r = float(self.labeled_point[:-1]) / 100
+                    num_with_anno = max(int(num_pts * r), 1)
+                    num_without_anno = num_pts - num_with_anno
+                    idx_without_anno = np.random.choice(num_pts, num_without_anno, replace=False)
+                    sub_labels[idx_without_anno] = 0
+                else:
+                    for i in range(self.num_classes):
+                        ind_per_class = np.where(sub_labels == i)[0]  # index of points belongs to a specific class
+                        num_per_class = len(ind_per_class)
+                        if num_per_class > 0:
+                            num_with_anno = int(self.labeled_point)
+                            num_without_anno = num_per_class - num_with_anno
+                            idx_without_anno = np.random.choice(ind_per_class, num_without_anno, replace=False)
+                            sub_labels[idx_without_anno] = 0
+
+                # =================================================================== #
+                #            retrain the model with predicted pseudo labels           #
+                # =================================================================== #
+                if self.retrain:
+                    # TODO: retrain with pseudo labels
+                    pass
+                    # pseudo_label_path = './test'
+                    # temp = read_ply(join(pseudo_label_path, cloud_name + '.ply'))
+                    # pseudo_label = temp['pred']
+                    # pseudo_label_ratio = 0.01
+                    # pseudo_label[sub_labels != 0] = sub_labels[sub_labels != 0]
+                    # sub_labels = pseudo_label
+                    # self.num_with_anno_per_batch = int(cfg.num_points * pseudo_label_ratio)
+
+
             # Read pkl with search tree
             with open(kd_tree_file, 'rb') as f:
                 search_tree = pickle.load(f)
@@ -264,19 +226,43 @@ class ActiveLearningSampler(IterableDataset):
                 queried_pc_colors = self.dataset.input_colors[self.split][cloud_idx][queried_idx]
                 queried_pc_labels = self.dataset.input_labels[self.split][cloud_idx][queried_idx]
 
+                                
+            if self.split == 'training':
+                unique_label_value = np.unique(queried_pc_labels)
+                if len(unique_label_value) <= 1:
+                    continue
+                else:
+                    # ================================================================== #
+                    #            Keep the same number of labeled points per batch        #
+                    # ================================================================== #
+                    idx_with_anno = np.where(queried_pc_labels != self.ignored_labels[0])[0]
+                    num_with_anno = len(idx_with_anno)
+                    if num_with_anno > self.dataset.num_with_anno_per_batch:
+                        idx_with_anno = np.random.choice(idx_with_anno, self.dataset.num_with_anno_per_batch, replace=False)
+                    elif num_with_anno < self.dataset.num_with_anno_per_batch:
+                        dup_idx = np.random.choice(idx_with_anno, self.dataset.num_with_anno_per_batch - len(idx_with_anno))
+                        idx_with_anno = np.concatenate([idx_with_anno, dup_idx], axis=0)
+                    xyz_with_anno = queried_pc_xyz[idx_with_anno]
+                    labels_with_anno = queried_pc_labels[idx_with_anno]
+            else:
+                xyz_with_anno = queried_pc_xyz
+                labels_with_anno = queried_pc_labels
+
             queried_pc_xyz = torch.from_numpy(queried_pc_xyz).float()
             queried_pc_colors = torch.from_numpy(queried_pc_colors).float()
             queried_pc_labels = torch.from_numpy(queried_pc_labels).long()
             queried_idx = torch.from_numpy(queried_idx).float() # keep float here?
             cloud_idx = torch.from_numpy(np.array([cloud_idx], dtype=np.int32)).float()
-
             points = torch.cat( (queried_pc_xyz, queried_pc_colors), 1)
 
-            yield points, queried_pc_labels
+            xyz_with_anno = torch.from_numpy(xyz_with_anno).float()
+            labels_with_anno = torch.from_numpy(labels_with_anno).long()
+
+            yield points, queried_pc_labels, queried_idx, cloud_idx, xyz_with_anno, labels_with_anno
 
 
 def data_loaders(dir, hparams, sampling_method='active_learning', **kwargs):
-    dataset = CloudsDataset(dir)
+    dataset = CloudsDataset(dir, hparams.labeled_point, hparams.num_points, hparams.num_classes, hparams.retrain)
     batch_size = kwargs.get('batch_size', 6)
     hparams = hparams
     val_sampler = ActiveLearningSampler(
