@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 import models.Lovasz_losses as L
 from os.path import join, exists, dirname, abspath
-from helper_ply import write_ply
+from utils.ply import write_ply
 from sklearn.neighbors import KDTree
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -18,7 +18,7 @@ sys.path.append(BASE_DIR)
 sys.path.append(os.path.join(BASE_DIR, 'utils'))
 
 import cpp_wrappers.cpp_subsampling.grid_subsampling as cpp_subsampling
-import nearest_neighbors.lib.python.nearest_neighbors as nearest_neighbors
+import utils.nearest_neighbors.lib.python.nearest_neighbors as nearest_neighbors
 
 
 class ConfignuScenes:
@@ -624,7 +624,7 @@ class DataProcessing:
         return element
 
     @staticmethod
-    def data_augment(self, data):
+    def data_augment(data, num_points):
         data_xyz = data[:, :, 0:3]
         batch_size = data_xyz.shape[0]
         aug_option = np.random.choice([0, 1, 2])
@@ -638,24 +638,24 @@ class DataProcessing:
             R = torch.tensor(R, dtype=torch.float32)
             data_xyz = data_xyz.reshape(-1, 3)
             data_xyz = torch.matmul(data_xyz, R)
-            data_xyz = data_xyz.reshape(-1, self.config.num_points, 3)
+            data_xyz = data_xyz.reshape(-1, num_points, 3)
         elif aug_option == 2:
             # jitter
             sigma = 0.01
             clip = 0.05
-            jittered_point = np.clip(sigma * np.random.randn(self.config.num_points, 3), -1 * clip, clip)
+            jittered_point = np.clip(sigma * np.random.randn(num_points, 3), -1 * clip, clip)
             jittered_point = np.tile(np.expand_dims(jittered_point, axis=0), [batch_size, 1, 1])
-            data_xyz = data_xyz + torch.tensor(jittered_point, torch.float32)
+            data_xyz = data_xyz + torch.tensor(jittered_point, dtype=torch.float32)
         if data.shape[-1] > 3:
             data_f = data[:, :, 3:]
             data_aug = torch.cat([data_xyz, data_f], dim=-1)
         else:
             data_aug = data_xyz
-        data_aug_t = torch.transpose(data_aug, [0, 2, 1])
-        data_aug_t = data_aug_t.reshape([-1, data.get_shape()[-1].value, self.config.num_points])
-        att_activation = torch.nn.Linear(data_aug_t, 1, activation=None, use_bias=False, name='channel_attention')
-        att_activation = torch.transpose(att_activation, [0, 2, 1])
-        att_scores = torch.nn.Softmax(att_activation, dim=-1)
+        data_aug_t = data_aug.permute(0, 2, 1)
+        data_aug_t = data_aug_t.reshape(-1, data.size(-1), num_points)
+        att_activation = torch.nn.Linear(data_aug_t.size(-1), 1, bias=False)(data_aug_t)
+        att_activation = att_activation.permute(0, 2, 1)
+        att_scores = torch.nn.Softmax(dim=-1)(att_activation)
         data_aug = torch.multiply(data_aug, att_scores)
         return data_aug
     @staticmethod

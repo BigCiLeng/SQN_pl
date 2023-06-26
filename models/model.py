@@ -6,7 +6,7 @@ import torch.nn as nn
 # try:
 #     from torch_points import knn
 # except (ModuleNotFoundError, ImportError):
-from torch_points_kernels import knn
+from torch_points_kernels import knn, three_interpolate, three_nn
 from utils.tools import DataProcessing
 class SharedMLP(nn.Module):
     def __init__(
@@ -184,11 +184,12 @@ class LocalFeatureAggregation(nn.Module):
 
 
 class SQN(nn.Module):
-    def __init__(self, d_in, num_classes, is_training, num_neighbors=16, decimation=4):
+    def __init__(self, d_in, num_classes, is_training, num_points, num_neighbors=16, decimation=4):
         super(SQN, self).__init__()
         self.num_neighbors = num_neighbors
         self.decimation = decimation
         self.is_training = is_training
+        self.num_points = num_points
         self.fc_start = nn.Linear(d_in, 8)
         self.bn_start = nn.Sequential(
             nn.BatchNorm2d(8, eps=1e-6, momentum=0.99),
@@ -212,15 +213,14 @@ class SQN(nn.Module):
             activation_fn=nn.ReLU()
         )
         self.decoder = nn.ModuleList([
-            SharedMLP(1024, 256, **decoder_kwargs),
-            SharedMLP(512, 128, **decoder_kwargs),
-            SharedMLP(256, 32, **decoder_kwargs),
-            SharedMLP(64, 8, **decoder_kwargs)
+            SharedMLP(928, 256, **decoder_kwargs),
+            SharedMLP(256, 128, **decoder_kwargs),
+            SharedMLP(128, 64, **decoder_kwargs)
         ])
 
         # final semantic prediction
         self.fc_end = nn.Sequential(
-            SharedMLP(8, 64, bn=True, activation_fn=nn.ReLU()),
+            SharedMLP(64, 64, bn=True, activation_fn=nn.ReLU()),
             SharedMLP(64, 32, bn=True, activation_fn=nn.ReLU()),
             nn.Dropout(),
             SharedMLP(32, num_classes)
@@ -243,21 +243,12 @@ class SQN(nn.Module):
         N = input['points'].size(1)
         d = self.decimation
         feature = input['points']
-        batch_anno_xyz = input['batch_anno_xyz'].clone()
-
-        feature = torch.where(self.is_training,
-                              lambda: torch.cat([feature, DataProcessing.data_augment(feature)], dim=0),
-                              lambda: feature
-                              )
-        batch_anno_xyz = torch.where(self.is_training,
-                                     lambda: torch.cat([batch_anno_xyz, batch_anno_xyz], dim=0),
-                                     lambda: batch_anno_xyz
-                                     )
+        batch_anno_xyz = input['xyz_with_anno'].clone()
         coords = feature[...,:3]
-        coords = torch.where(self.is_training,
-                             lambda: torch.cat([coords, coords], dim=0),
-                             lambda: coords
-                             )
+        if self.is_training:
+            feature = torch.cat([feature, DataProcessing.data_augment(feature, self.num_points)], dim=0)
+            batch_anno_xyz = torch.cat([batch_anno_xyz, batch_anno_xyz], dim=0)
+            coords = torch.cat([coords, coords], dim=0)
 
         feature = self.fc_start(feature).transpose(-2,-1).unsqueeze(-1)
         feature = self.bn_start(feature) # shape (B, d, N, 1)
@@ -269,7 +260,7 @@ class SQN(nn.Module):
         f_interp = []
         permutation = torch.randperm(N)
         coords = coords[:,permutation]
-        x = x[:,:,permutation]
+        feature = feature[:,:,permutation]
 
         for lfa in self.encoder:
             # at iteration i, x.shape = (B, N//(d**i), d_in)
@@ -280,13 +271,13 @@ class SQN(nn.Module):
             feature = feature[:,:,:N//decimation_ratio]
 
             # ###########################Semantic Query############################
-            idx, _ = knn(coords, batch_anno_xyz, 3)
+            dist, idx = three_nn(coords, batch_anno_xyz)
             neighbor_xyz = DataProcessing.gather_neighbour(coords, idx)
             xyz_tile = torch.tile(torch.unsqueeze(batch_anno_xyz, dim=2), (1, 1, idx.shape[-1], 1))
             relative_xyz = xyz_tile - neighbor_xyz
             dist = torch.sum(torch.square(relative_xyz), dim=-1, keepdim=False)
             weight = torch.ones_like(dist) / 3.0
-            interpolated_points = three_interpolate(torch.squeeze(feature, dim=2), idx, weight)
+            interpolated_points = three_interpolate(torch.squeeze(feature, dim=-1).contiguous(), idx, weight)
             f_interp.append(interpolated_points)
 
         # # # >>>>>>>>>> ENCODER
@@ -294,7 +285,7 @@ class SQN(nn.Module):
         # x = self.mlp(x)
 
         # <<<<<<<<<< DECODER
-        interpolated_points  = torch.cat(f_interp, dim=-1)
+        interpolated_points  = torch.cat(f_interp, dim=1).unsqueeze(-1)
         for mlp in self.decoder:
             # neighbors, _ = knn(
             #     coords[:,:N//decimation_ratio].cpu().contiguous(), # original set

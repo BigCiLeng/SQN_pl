@@ -235,7 +235,8 @@ class ActiveLearningSampler(IterableDataset):
                     # ================================================================== #
                     #            Keep the same number of labeled points per batch        #
                     # ================================================================== #
-                    idx_with_anno = np.where(queried_pc_labels != self.ignored_labels[0])[0]
+                    # idx_with_anno = np.where(queried_pc_labels != self.ignored_labels[0])[0]
+                    idx_with_anno = queried_pc_labels
                     num_with_anno = len(idx_with_anno)
                     if num_with_anno > self.dataset.num_with_anno_per_batch:
                         idx_with_anno = np.random.choice(idx_with_anno, self.dataset.num_with_anno_per_batch, replace=False)

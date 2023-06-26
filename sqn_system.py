@@ -28,12 +28,12 @@ from tqdm import tqdm
 import time
 
 # mine
-from dataset.data import data_loaders
+from dataset.dataset import data_loaders
 from models.model import SQN
 from utils.tools import DataProcessing
 from utils.metrics import accuracy, intersection_over_union
 from utils.ply import read_ply, write_ply
-from tf_interpolate import three_nn, three_interpolate
+# from tf_interpolate import three_nn, three_interpolate
 def evaluate(model, points):
     model.eval()
     with torch.no_grad():
@@ -86,6 +86,7 @@ class SQN_System(pl.LightningModule):
                 d_in,
                 self.num_classes,
                 True,
+                self.hparams['hparams'].num_points,
                 num_neighbors=self.hparams['hparams'].neighbors,
                 decimation=self.hparams['hparams'].decimation,
             )
@@ -101,7 +102,7 @@ class SQN_System(pl.LightningModule):
             )
             d_in = 6
             num_classes = self.hparams['hparams'].num_classes
-            self.model = SQN(d_in, num_classes,False, 16, 4)
+            self.model = SQN(d_in, num_classes,False,self.hparams['hparams'].num_points, 16, 4)
     def train_dataloader(self):
         return self.train_loader
 
@@ -118,12 +119,14 @@ class SQN_System(pl.LightningModule):
         return [self.optimizer], [self.scheduler]
 
     def training_step(self, batch, batch_idx):
-        points, labels = self.decode_batch(batch)
-        scores = self(points)
+        input = self.decode_batch(batch)
+        points = input['points']
+        labels = input['queried_pc_labels']
+        scores = self(input)
 
         logp = torch.distributions.utils.probs_to_logits(scores, is_binary=False)
 
-        loss = self.loss(logp, labels)
+        loss = self.loss(logp, labels, self.weights, self.num_classes, self.loss_type)
         acc = accuracy(scores, labels)
         iou = intersection_over_union(scores, labels)
 
@@ -157,12 +160,14 @@ class SQN_System(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         self.model.eval()
-        points, labels = self.decode_batch(batch)
+        input = self.decode_batch(batch)
+        points = input['points']
+        labels = input['queried_pc_labels']
         with torch.no_grad():
-            scores = self(points)
+            scores = self(input)
         logp = torch.distributions.utils.probs_to_logits(scores, is_binary=False)
 
-        loss = self.loss(logp, labels)
+        loss = self.loss(logp, labels, self.weights, self.num_classes, self.loss_type)
         acc = accuracy(scores, labels)
         iou = intersection_over_union(scores, labels)
 
@@ -247,13 +252,13 @@ if __name__ == '__main__':
     dirs = parser.add_argument_group('Storage directories')
     misc = parser.add_argument_group('Miscellaneous')
     base.add_argument('--dataset_name', type=str, help='name of the dataset',
-                        default='Semantic3D')
+                        default='S3DIS')
     base.add_argument('--dataset', type=str, help='location of the dataset',
-                        default='/share/dataset/sqn_own/semantic3d')
+                        default='/share/dataset/S3DIS')
     
     base.add_argument('--work_type', type=str, help='train, val, test', default='train')
 
-    base.add_argument('--num_classes', type=int, help='nums of label type', default=9)
+    base.add_argument('--num_classes', type=int, help='nums of label type', default=13)
 
     expr.add_argument('--epochs', type=int, help='number of epochs',
                         default=50)
@@ -290,9 +295,9 @@ if __name__ == '__main__':
     dirs.add_argument('--logs_dir', type=Path, help='path to tensorboard logs',
                         default='runs')
     misc.add_argument('--device', type=str, help='cpu/gpu',
-                        default='gpu')
+                        default='cpu')
     misc.add_argument('--gpu', type=int, help='which GPU to use (-1 for CPU)',
-                        default=2)
+                        default=1)
     misc.add_argument('--name', type=str, help='name of the experiment',
                         default=None)
     misc.add_argument('--num_workers', type=int, help='number of threads for loading data',
