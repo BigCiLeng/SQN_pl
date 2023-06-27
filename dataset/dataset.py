@@ -11,7 +11,7 @@ import re
 from utils.tools import DataProcessing as DP
 
 class CloudsDataset(Dataset):
-    def __init__(self, dir, labeled_point, num_points, num_classes, retrain, data_type='npy'):
+    def __init__(self, dir, labeled_point, num_points, num_classes, retrain, ignored_labels, data_type='npy'):
         self.path = dir
         self.paths = list(dir.glob(f'*.{data_type}'))
         self.size = len(self.paths)
@@ -34,6 +34,7 @@ class CloudsDataset(Dataset):
         else:
             self.num_with_anno_per_batch = num_classes
         self.num_per_class = np.zeros(num_classes)
+        self.ignored_labels = ignored_labels
         ###
         self.load_data()
         print('Size of training : ', len(self.input_colors['training']))
@@ -79,7 +80,7 @@ class CloudsDataset(Dataset):
                     num_with_anno = max(int(num_pts * r), 1)
                     num_without_anno = num_pts - num_with_anno
                     idx_without_anno = np.random.choice(num_pts, num_without_anno, replace=False)
-                    sub_labels[idx_without_anno] = 0
+                    sub_labels[idx_without_anno] = self.ignored_labels
                 else:
                     for i in range(self.num_classes):
                         ind_per_class = np.where(sub_labels == i)[0]  # index of points belongs to a specific class
@@ -88,7 +89,7 @@ class CloudsDataset(Dataset):
                             num_with_anno = int(self.labeled_point)
                             num_without_anno = num_per_class - num_with_anno
                             idx_without_anno = np.random.choice(ind_per_class, num_without_anno, replace=False)
-                            sub_labels[idx_without_anno] = 0
+                            sub_labels[idx_without_anno] = self.ignored_labels
 
                 # =================================================================== #
                 #            retrain the model with predicted pseudo labels           #
@@ -235,8 +236,8 @@ class ActiveLearningSampler(IterableDataset):
                     # ================================================================== #
                     #            Keep the same number of labeled points per batch        #
                     # ================================================================== #
-                    # idx_with_anno = np.where(queried_pc_labels != self.ignored_labels[0])[0]
-                    idx_with_anno = queried_pc_labels
+                    idx_with_anno = np.where(queried_pc_labels != self.dataset.ignored_labels)[0]
+                    # idx_with_anno = queried_pc_labels
                     num_with_anno = len(idx_with_anno)
                     if num_with_anno > self.dataset.num_with_anno_per_batch:
                         idx_with_anno = np.random.choice(idx_with_anno, self.dataset.num_with_anno_per_batch, replace=False)
@@ -263,7 +264,7 @@ class ActiveLearningSampler(IterableDataset):
 
 
 def data_loaders(dir, hparams, sampling_method='active_learning', **kwargs):
-    dataset = CloudsDataset(dir, hparams.labeled_point, hparams.num_points, hparams.num_classes, hparams.retrain)
+    dataset = CloudsDataset(dir, hparams.labeled_point, hparams.num_points, hparams.num_classes, hparams.retrain, hparams.ignored_labels)
     batch_size = kwargs.get('batch_size', 6)
     hparams = hparams
     val_sampler = ActiveLearningSampler(

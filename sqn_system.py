@@ -51,9 +51,9 @@ class SQN_System(pl.LightningModule):
             self.loss_type = 'wce'
         else:
             self.loss_type = 'sqrt'
-    
+        self.ignored_labels = self.hparams['hparams'].ignored_labels
         self.weights = DataProcessing.get_class_weights(self.hparams['hparams'].dataset_name, self.loss_type)
-        self.loss = DataProcessing.get_loss
+        self.loss = self.get_loss
 
         self.training_step_outputs = []
         self.validation_step_outputs = []
@@ -117,14 +117,36 @@ class SQN_System(pl.LightningModule):
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.hparams['hparams'].adam_lr)
         self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, self.hparams['hparams'].scheduler_gamma)
         return [self.optimizer], [self.scheduler]
+    
+    def get_loss(self, logits, labels, pre_cal_weights, num_classes, loss_type='sqrt'):
+        logits = logits.reshape(-1, self.num_classes)
+        labels = labels.reshape(-1)
+        # 创建一个布尔张量，表示哪些标签需要被忽略
+        ignored_bool = torch.zeros_like(labels, dtype=torch.bool)
+        ignored_bool = ignored_bool | (labels == self.ignored_labels)
 
+        # 收集不被忽略的logits和labels
+        valid_idx = torch.nonzero(~ignored_bool, as_tuple=True)
+        valid_logits = logits[valid_idx]
+        valid_labels_init = labels[valid_idx]
+
+        # 将label值减少到logit形状的范围内
+        reducing_list = torch.arange(self.num_classes, dtype=torch.int32)
+        inserted_value = torch.zeros(1, dtype=torch.int32)
+        reducing_list = torch.cat([reducing_list[:self.ignored_labels], inserted_value, reducing_list[self.ignored_labels:]], 0)
+        valid_labels = reducing_list[valid_labels_init]
+
+        # 计算loss
+        output_loss = DataProcessing.get_loss(valid_logits, valid_labels, self.weights, self.num_classes, self.loss_type)
+        return output_loss
     def training_step(self, batch, batch_idx):
         input = self.decode_batch(batch)
         points = input['points']
-        labels = input['queried_pc_labels']
+        labels = input['labels_with_anno']
+        labels = torch.cat([labels, labels], dim=0)
         scores = self(input)
 
-        logp = torch.distributions.utils.probs_to_logits(scores, is_binary=False)
+        logp = scores
 
         loss = self.loss(logp, labels, self.weights, self.num_classes, self.loss_type)
         acc = accuracy(scores, labels)
@@ -162,10 +184,11 @@ class SQN_System(pl.LightningModule):
         self.model.eval()
         input = self.decode_batch(batch)
         points = input['points']
-        labels = input['queried_pc_labels']
+        labels = input['labels_with_anno']
+        labels = torch.cat([labels, labels], dim=0)
         with torch.no_grad():
             scores = self(input)
-        logp = torch.distributions.utils.probs_to_logits(scores, is_binary=False)
+        logp = scores
 
         loss = self.loss(logp, labels, self.weights, self.num_classes, self.loss_type)
         acc = accuracy(scores, labels)
@@ -285,6 +308,7 @@ if __name__ == '__main__':
                         default='0.1%')
     param.add_argument('--retrain', type=bool, help='',
                         default=1)
+    param.add_argument('--ignored_labels', type=int, help='useless label', default=12)
     
     dirs.add_argument('--test_dir', type=str, help='location of the test set in the dataset dir',
                         default='test')

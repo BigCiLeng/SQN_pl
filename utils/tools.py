@@ -595,10 +595,11 @@ class DataProcessing:
         return np.expand_dims(ce_label_weight, axis=0)
     @staticmethod
     def get_loss(logits, labels, pre_cal_weights, num_classes, loss_type='sqrt'):
+
         class_weights = torch.tensor(pre_cal_weights, dtype=torch.float32)
         one_hot_labels = F.one_hot(labels.long(), num_classes=num_classes).float()
         weights = torch.sum(class_weights * one_hot_labels, dim=1)
-        unweighted_losses = F.cross_entropy(logits, labels, reduction='none')
+        unweighted_losses = F.cross_entropy(logits, labels.long(), reduction='none')
         weighted_losses = unweighted_losses * weights
         output_loss = torch.mean(weighted_losses)
 
