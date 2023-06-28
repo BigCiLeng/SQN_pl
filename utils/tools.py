@@ -596,7 +596,7 @@ class DataProcessing:
     @staticmethod
     def get_loss(logits, labels, pre_cal_weights, num_classes, loss_type='sqrt'):
 
-        class_weights = torch.tensor(pre_cal_weights, dtype=torch.float32)
+        class_weights = torch.tensor(pre_cal_weights, dtype=torch.float32).to(labels)
         one_hot_labels = F.one_hot(labels.long(), num_classes=num_classes).float()
         weights = torch.sum(class_weights * one_hot_labels, dim=1)
         unweighted_losses = F.cross_entropy(logits, labels.long(), reduction='none')
@@ -638,6 +638,7 @@ class DataProcessing:
             R = np.array([[np.cos(theta), 0, -np.sin(theta)], [0, 1, 0], [np.sin(theta), 0, np.cos(theta)]])
             R = torch.tensor(R, dtype=torch.float32)
             data_xyz = data_xyz.reshape(-1, 3)
+            R = R.to(data)
             data_xyz = torch.matmul(data_xyz, R)
             data_xyz = data_xyz.reshape(-1, num_points, 3)
         elif aug_option == 2:
@@ -646,7 +647,7 @@ class DataProcessing:
             clip = 0.05
             jittered_point = np.clip(sigma * np.random.randn(num_points, 3), -1 * clip, clip)
             jittered_point = np.tile(np.expand_dims(jittered_point, axis=0), [batch_size, 1, 1])
-            data_xyz = data_xyz + torch.tensor(jittered_point, dtype=torch.float32)
+            data_xyz = data_xyz + torch.tensor(jittered_point, dtype=torch.float32).to(data)
         if data.shape[-1] > 3:
             data_f = data[:, :, 3:]
             data_aug = torch.cat([data_xyz, data_f], dim=-1)
@@ -654,9 +655,9 @@ class DataProcessing:
             data_aug = data_xyz
         data_aug_t = data_aug.permute(0, 2, 1)
         data_aug_t = data_aug_t.reshape(-1, data.size(-1), num_points)
-        att_activation = torch.nn.Linear(data_aug_t.size(-1), 1, bias=False)(data_aug_t)
+        att_activation = torch.nn.Linear(data_aug_t.size(-1), 1, bias=False).cuda()(data_aug_t)
         att_activation = att_activation.permute(0, 2, 1)
-        att_scores = torch.nn.Softmax(dim=-1)(att_activation)
+        att_scores = torch.nn.Softmax(dim=-1).cuda()(att_activation)
         data_aug = torch.multiply(data_aug, att_scores)
         return data_aug
     @staticmethod

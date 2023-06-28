@@ -349,9 +349,9 @@ if __name__ == '__main__':
     dirs.add_argument('--logs_dir', type=Path, help='path to tensorboard logs',
                         default='runs')
     misc.add_argument('--device', type=str, help='cpu/gpu',
-                        default='cpu')
+                        default='gpu')
     misc.add_argument('--gpu', type=int, help='which GPU to use (-1 for CPU)',
-                        default=1)
+                        default=2)
     misc.add_argument('--name', type=str, help='name of the experiment',
                         default=None)
     misc.add_argument('--num_workers', type=int, help='number of threads for loading data',
