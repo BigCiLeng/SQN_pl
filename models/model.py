@@ -272,10 +272,10 @@ class SQN(nn.Module):
 
             # ###########################Semantic Query############################
             dist, idx = three_nn(coords, batch_anno_xyz)
-            neighbor_xyz = DataProcessing.gather_neighbour(coords, idx)
-            xyz_tile = torch.tile(torch.unsqueeze(batch_anno_xyz, dim=2), (1, 1, idx.shape[-1], 1))
-            relative_xyz = xyz_tile - neighbor_xyz
-            dist = torch.sum(torch.square(relative_xyz), dim=-1, keepdim=False)
+            # neighbor_xyz = DataProcessing.gather_neighbour(coords, idx)
+            # xyz_tile = torch.tile(torch.unsqueeze(batch_anno_xyz, dim=2), (1, 1, idx.shape[-1], 1))
+            # relative_xyz = xyz_tile - neighbor_xyz
+            # dist = torch.sum(torch.square(relative_xyz), dim=-1, keepdim=False)
             weight = torch.ones_like(dist) / 3.0
             interpolated_points = three_interpolate(torch.squeeze(feature, dim=-1).contiguous(), idx, weight)
             f_interp.append(interpolated_points)

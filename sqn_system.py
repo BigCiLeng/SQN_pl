@@ -63,7 +63,6 @@ class SQN_System(pl.LightningModule):
     def decode_batch(self, batch):
         points, queried_pc_labels, queried_idx, cloud_idx, xyz_with_anno, labels_with_anno = batch
         return {'points': points, 'queried_pc_labels': queried_pc_labels,
-                'queried_idx': queried_idx, 'cloud_idx':cloud_idx, 
                 'xyz_with_anno': xyz_with_anno, 'labels_with_anno': labels_with_anno}
 
     def get_lr(self, optimizer):
@@ -128,32 +127,63 @@ class SQN_System(pl.LightningModule):
         # 收集不被忽略的logits和labels
         valid_idx = torch.nonzero(~ignored_bool, as_tuple=True)
         valid_logits = logits[valid_idx]
-        valid_labels_init = labels[valid_idx]
+        # valid_labels_init = labels[valid_idx]
+        valid_labels = labels[valid_idx]
 
-        # 将label值减少到logit形状的范围内
-        reducing_list = torch.arange(self.num_classes, dtype=torch.int32)
-        inserted_value = torch.zeros(1, dtype=torch.int32)
-        reducing_list = torch.cat([reducing_list[:self.ignored_labels], inserted_value, reducing_list[self.ignored_labels:]], 0)
-        valid_labels = reducing_list[valid_labels_init]
+        # Reduce label values in the range of logit shape
+        # reducing_list = torch.arange(self.num_classes, dtype=torch.int32)
+        # inserted_value = torch.zeros(1, dtype=torch.int32)
+        # reducing_list = torch.cat([reducing_list[:self.ignored_labels], inserted_value, reducing_list[self.ignored_labels:]], 0)
+        # valid_labels = reducing_list[valid_labels_init]
 
         # 计算loss
         output_loss = DataProcessing.get_loss(valid_logits, valid_labels, self.weights, self.num_classes, self.loss_type)
         return output_loss
+    def get_accuracy(self, logits, labels):
+        logits = logits.reshape(-1, self.num_classes)
+        labels = labels.reshape(-1)
+        # 创建一个布尔张量，表示哪些标签需要被忽略
+        ignored_bool = torch.zeros_like(labels, dtype=torch.bool)
+        ignored_bool = ignored_bool | (labels == self.ignored_labels)
+
+        # 收集不被忽略的logits和labels
+        valid_idx = torch.nonzero(~ignored_bool, as_tuple=True)
+        valid_logits = logits[valid_idx]
+        # valid_labels_init = labels[valid_idx]
+        valid_labels = labels[valid_idx]
+        valid_logits = valid_logits.permute(1,0)
+        acc = accuracy(valid_logits, valid_labels)
+        return acc
+    def get_intersection_over_union(self, logits, labels):
+        logits = logits.reshape(-1, self.num_classes)
+        labels = labels.reshape(-1)
+        # 创建一个布尔张量，表示哪些标签需要被忽略
+        ignored_bool = torch.zeros_like(labels, dtype=torch.bool)
+        ignored_bool = ignored_bool | (labels == self.ignored_labels)
+
+        # 收集不被忽略的logits和labels
+        valid_idx = torch.nonzero(~ignored_bool, as_tuple=True)
+        valid_logits = logits[valid_idx]
+        # valid_labels_init = labels[valid_idx]
+        valid_labels = labels[valid_idx]
+        valid_logits = valid_logits.permute(1,0)
+        iou = intersection_over_union(valid_logits, valid_labels)
+        return iou
     def training_step(self, batch, batch_idx):
         input = self.decode_batch(batch)
         points = input['points']
-        labels = input['labels_with_anno']
+        labels = input['queried_pc_labels']
         labels = torch.cat([labels, labels], dim=0)
         scores = self(input)
 
         logp = scores
 
         loss = self.loss(logp, labels, self.weights, self.num_classes, self.loss_type)
-        acc = accuracy(scores, labels)
-        iou = intersection_over_union(scores, labels)
+        acc = self.get_accuracy(logp, labels)
+        iou = self.get_intersection_over_union(logp, labels)
 
-        acc_mean = torch.tensor(acc).mean()
-        iou_mean = torch.tensor(iou).mean()
+        acc_mean = torch.tensor(acc[-1], dtype=torch.float32)
+        iou_mean = torch.tensor(iou[-1], dtype=torch.float32)
 
         log= {'lr': self.get_lr(self.optimizer), 'train/loss': loss, 'train/accuracy': acc_mean, 'train/iou': iou_mean}
 
@@ -184,18 +214,18 @@ class SQN_System(pl.LightningModule):
         self.model.eval()
         input = self.decode_batch(batch)
         points = input['points']
-        labels = input['labels_with_anno']
+        labels = input['queried_pc_labels']
         labels = torch.cat([labels, labels], dim=0)
         with torch.no_grad():
             scores = self(input)
         logp = scores
 
         loss = self.loss(logp, labels, self.weights, self.num_classes, self.loss_type)
-        acc = accuracy(scores, labels)
-        iou = intersection_over_union(scores, labels)
+        acc = self.get_accuracy(logp, labels)
+        iou = self.get_intersection_over_union(logp, labels)
 
-        acc_mean = torch.tensor(acc).mean()
-        iou_mean = torch.tensor(iou).mean()
+        acc_mean = torch.tensor(acc[-1], dtype=torch.float32)
+        iou_mean = torch.tensor(iou[-1], dtype=torch.float32)
 
         log = {'val/loss': loss, 'val/accuracy': acc_mean, 'val/iou': iou_mean}
         pred = {'loss': loss, 'accuracy': acc_mean,'iou': iou_mean, 'log': log}
@@ -249,7 +279,7 @@ def train(args):
                          callbacks=[checkpoint] if checkpoint is not None else None,
                          accelerator=args.device,
                          devices=args.gpu,
-                         strategy=DDPStrategy(find_unused_parameters=False),
+                         strategy=DDPStrategy(find_unused_parameters=True),
                          check_val_every_n_epoch=5,
                          num_sanity_val_steps=1,
                          benchmark=True,

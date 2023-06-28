@@ -239,7 +239,7 @@ class ActiveLearningSampler(IterableDataset):
                     idx_with_anno = np.where(queried_pc_labels != self.dataset.ignored_labels)[0]
                     # idx_with_anno = queried_pc_labels
                     num_with_anno = len(idx_with_anno)
-                    if num_with_anno > self.dataset.num_with_anno_per_batch:
+                    if num_with_anno >= self.dataset.num_with_anno_per_batch:
                         idx_with_anno = np.random.choice(idx_with_anno, self.dataset.num_with_anno_per_batch, replace=False)
                     elif num_with_anno < self.dataset.num_with_anno_per_batch:
                         dup_idx = np.random.choice(idx_with_anno, self.dataset.num_with_anno_per_batch - len(idx_with_anno))
