@@ -260,8 +260,8 @@ class ActiveLearningSampler(IterableDataset):
             xyz_with_anno = torch.from_numpy(xyz_with_anno).float()
             labels_with_anno = torch.from_numpy(labels_with_anno).long()
 
-            yield points, queried_pc_labels, queried_idx, cloud_idx, xyz_with_anno, labels_with_anno
-
+            # yield points, queried_pc_labels, queried_idx, cloud_idx, xyz_with_anno, labels_with_anno
+            yield points, queried_pc_labels, xyz_with_anno
 
 def data_loaders(dir, hparams, sampling_method='active_learning', **kwargs):
     dataset = CloudsDataset(dir, hparams.labeled_point, hparams.num_points, hparams.num_classes, hparams.retrain, hparams.ignored_labels)

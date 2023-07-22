@@ -226,7 +226,7 @@ class SQN(nn.Module):
             SharedMLP(32, num_classes)
         )
 
-    def forward(self, input):
+    def forward(self, points, xyz_with_anno):
         r"""
             Forward pass
 
@@ -240,10 +240,10 @@ class SQN(nn.Module):
             torch.Tensor, shape (B, num_classes, N)
                 segmentation scores for each point
         """
-        N = input['points'].size(1)
+        N = points.size(1)
         d = self.decimation
-        feature = input['points']
-        batch_anno_xyz = input['xyz_with_anno'].clone()
+        feature = points
+        batch_anno_xyz = xyz_with_anno.clone()
         coords = feature[...,:3]
         if self.is_training:
             feature = torch.cat([feature, DataProcessing.data_augment(feature, self.num_points)], dim=0)

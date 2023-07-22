@@ -57,13 +57,13 @@ class SQN_System(pl.LightningModule):
 
         self.training_step_outputs = []
         self.validation_step_outputs = []
-    def forward(self, input):
-        return self.model(input)
+    def forward(self, points, xyz_with_anno):
+        return self.model(points, xyz_with_anno)
 
     def decode_batch(self, batch):
-        points, queried_pc_labels, queried_idx, cloud_idx, xyz_with_anno, labels_with_anno = batch
-        return {'points': points, 'queried_pc_labels': queried_pc_labels,
-                'xyz_with_anno': xyz_with_anno, 'labels_with_anno': labels_with_anno}
+        # points, queried_pc_labels, queried_idx, cloud_idx, xyz_with_anno, labels_with_anno = batch
+        points, queried_pc_labels, xyz_with_anno = batch
+        return points, queried_pc_labels, xyz_with_anno
 
     def get_lr(self, optimizer):
         for param_group in optimizer.param_groups:
@@ -171,10 +171,11 @@ class SQN_System(pl.LightningModule):
         return iou
     def training_step(self, batch, batch_idx):
         input = self.decode_batch(batch)
-        points = input['points']
-        labels = input['queried_pc_labels']
+        points, labels, xyz_with_anno = self.decode_batch(batch)
+        # points = input['points']
+        # labels = input['queried_pc_labels']
         labels = torch.cat([labels, labels], dim=0)
-        scores = self(input)
+        scores = self(points, xyz_with_anno)
 
         logp = scores
 
@@ -185,13 +186,12 @@ class SQN_System(pl.LightningModule):
         acc_mean = torch.tensor(acc[-1], dtype=torch.float32)
         iou_mean = torch.tensor(iou[-1], dtype=torch.float32)
 
-        log= {'lr': self.get_lr(self.optimizer), 'train/loss': loss, 'train/accuracy': acc_mean, 'train/iou': iou_mean}
+        preds = {'loss': loss.cpu().detach(), 'accuracy': acc_mean,'iou': iou_mean}
 
-        preds = {'loss': loss, 'accuracy': acc_mean,'iou': iou_mean, 'log': log}
-
-        self.log('train/loss', loss.clone().detach(), sync_dist=True)
-        self.log('train/accuracy', acc_mean.clone().detach(), sync_dist=True)
-        self.log('train/iou', iou_mean.clone().detach(), sync_dist=True)
+        self.log('train/loss', loss.cpu().detach().item(), sync_dist=True)
+        self.log('train/accuracy', acc_mean.cpu().detach().item(), sync_dist=True)
+        self.log('train/iou', iou_mean.cpu().detach().item(), sync_dist=True)
+        self.log('lr', self.get_lr(self.optimizer), sync_dist=True)
         self.training_step_outputs.append(preds)
 
         return loss
@@ -205,19 +205,19 @@ class SQN_System(pl.LightningModule):
         mean_loss = torch.mean(loss)
         mean_accuracy = torch.mean(acc)
         mean_iou = torch.mean(iou)
-        self.log('mean_train_loss', mean_loss.clone().detach(), sync_dist=True)
-        self.log('mean_train_accuracy', mean_accuracy.clone().detach(), sync_dist=True)
-        self.log('mean_train_iou', mean_iou.clone().detach(), sync_dist=True)
+        self.log('mean_train_loss', mean_loss.cpu().detach().item(), sync_dist=True)
+        self.log('mean_train_accuracy', mean_accuracy.cpu().detach().item(), sync_dist=True)
+        self.log('mean_train_iou', mean_iou.cpu().detach().item(), sync_dist=True)
         self.training_step_outputs.clear()
 
     def validation_step(self, batch, batch_idx):
         self.model.eval()
-        input = self.decode_batch(batch)
-        points = input['points']
-        labels = input['queried_pc_labels']
+        points, labels, xyz_with_anno = self.decode_batch(batch)
+        # points = input['points']
+        # labels = input['queried_pc_labels']
         labels = torch.cat([labels, labels], dim=0)
         with torch.no_grad():
-            scores = self(input)
+            scores = self(points, xyz_with_anno)
         logp = scores
 
         loss = self.loss(logp, labels, self.weights, self.num_classes, self.loss_type)
@@ -226,9 +226,10 @@ class SQN_System(pl.LightningModule):
 
         acc_mean = torch.tensor(acc[-1], dtype=torch.float32)
         iou_mean = torch.tensor(iou[-1], dtype=torch.float32)
-
-        log = {'val/loss': loss, 'val/accuracy': acc_mean, 'val/iou': iou_mean}
-        pred = {'loss': loss, 'accuracy': acc_mean,'iou': iou_mean, 'log': log}
+        self.log('val/loss', loss.cpu().detach().item(), sync_dist=True)
+        self.log('val/accuracy', acc_mean.cpu().detach().item(), sync_dist=True)
+        self.log('val/iou', iou_mean.cpu().detach().item(), sync_dist=True)
+        pred = {'loss': loss.cpu().detach(), 'accuracy': acc_mean,'iou': iou_mean}
         self.validation_step_outputs.append(pred)
 
         return pred
@@ -244,9 +245,9 @@ class SQN_System(pl.LightningModule):
         mean_accuracy = torch.mean(acc)
         mean_iou = torch.mean(iou)
 
-        self.log('mean_val_loss', mean_loss.clone().detach(), sync_dist=True)
-        self.log('mean_val_accuracy', mean_accuracy.clone().detach(), sync_dist=True)
-        self.log('mean_val_iou', mean_iou.clone().detach(), sync_dist=True)
+        self.log('mean_val_loss', mean_loss.cpu().detach().item(), sync_dist=True)
+        self.log('mean_val_accuracy', mean_accuracy.cpu().detach().item(), sync_dist=True)
+        self.log('mean_val_iou', mean_iou.cpu().detach().item(), sync_dist=True)
         self.validation_step_outputs.clear()
     def test_step(self, batch, batch_nb):
         points, labels = self.decode_batch(batch)
@@ -351,7 +352,7 @@ if __name__ == '__main__':
     misc.add_argument('--device', type=str, help='cpu/gpu',
                         default='gpu')
     misc.add_argument('--gpu', type=int, help='which GPU to use (-1 for CPU)',
-                        default=2)
+                        default=1)
     misc.add_argument('--name', type=str, help='name of the experiment',
                         default=None)
     misc.add_argument('--num_workers', type=int, help='number of threads for loading data',

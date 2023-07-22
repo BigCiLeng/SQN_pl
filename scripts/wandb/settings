@@ -1,0 +1,6 @@
+[default]
+mode = online
+entity = bigcileng
+project = SQN
+base_url = https://api.wandb.ai
+

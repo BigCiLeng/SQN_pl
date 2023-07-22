@@ -1,4 +1,14 @@
 TRAIN_S3DIS(){
+###
+ # @Author: BigCiLeng && bigcileng@outlook.com
+ # @Date: 2023-06-20 16:43:14
+ # @LastEditors: BigCiLeng && bigcileng@outlook.com
+ # @LastEditTime: 2023-07-01 20:07:31
+ # @FilePath: /SQN_pl/scripts/train_s3dis.sh
+ # @Description: 
+ # 
+ # Copyright (c) 2023 by bigcileng@outlook.com, All Rights Reserved. 
+### 
 pretrain_name=TRAIN_SEMANTIC3D
 cd ..
 dataset_name='S3DIS'
@@ -15,7 +25,7 @@ labeled_point='0.1%'
 ignored_labels=12
 
 retrain=False
-batch_size=3  # batch_size during training
+batch_size=2  # batch_size during training
 train_steps=500  # Number of steps per epochs
 val_steps=100  # Number of validation steps per epoch
 adam_lr=1e-2  # initial learning rate
