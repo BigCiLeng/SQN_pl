@@ -1,6 +1,6 @@
 # SQN: Weakly-Supervised Semantic Segmentation of Large-Scale 3D Point Clouds (ECCV2022)
 
-This repository contains a PyTorch-lightning implementation of [SQN](https://arxiv.org/abs/2104.04891).
+This repository contains a PyTorch-lightning implementation of [SQN](https://arxiv.org/abs/2104.04891).   
 
 ## Preparation
 
@@ -63,7 +63,8 @@ One can visualize the evolution of the loss with Wandb.
 
 This work implements the work presented in [SQN: Weakly-Supervised Semantic Segmentation of Large-Scale 3D Point Clouds (ECCV2022)](https://arxiv.org/abs/2104.04891).
 
-The original implementation (in TensorFlow 1) can be found [here](https://github.com/QingyongHu/SQN).
+The original implementation (in TensorFlow 1) can be found [here](https://github.com/QingyongHu/SQN).   
+
 The Pytorch implementation [aRI0U/RandLA-Net-pytorch](https://github.com/aRI0U/RandLA-Net-pytorch).
 
 <!--
