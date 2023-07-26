@@ -1,6 +1,6 @@
 import warnings
 from utils.helper_tool import ConfigSemanticKITTI as cfg
-from models.RandLANet import Network, compute_loss, compute_acc, IoUCalculator
+from models.SQN import Network, compute_loss, compute_acc, IoUCalculator
 from dataset.semantic_kitti_dataset import SemanticKITTI
 import numpy as np
 import os, argparse

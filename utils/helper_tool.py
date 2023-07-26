@@ -3,7 +3,8 @@ from os.path import join
 import numpy as np
 import colorsys, random, os, sys
 import pandas as pd
-
+import torch
+import torch.nn.functional as F
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -64,11 +65,14 @@ class ConfigS3DIS:
     train_sum_dir = 'train_log'
     saving = True
     saving_path = None
-    ignored_labels = np.array([])
+    ignored_labels = np.array([13])
 
     ## 
     name = 'S3DIS'
     dataset_dir = '/share/dataset/S3DIS'
+
+    ## SQN
+    labeled_point = '0.1%'
 
 class ConfigSemantic3D:
     k_n = 16  # KNN
@@ -266,7 +270,18 @@ class DataProcessing:
         weight = num_per_class / float(sum(num_per_class))
         ce_label_weight = 1 / (weight + 0.02)
         return np.expand_dims(ce_label_weight, axis=0)
-
+    
+    ########## SQN ##########
+    @staticmethod
+    def input_augment(is_training, xyz, neigh_idx, sub_idx):
+        xyz_c = torch.cat([xyz, xyz], dim=0)
+        neigh_idx_c = torch.cat([neigh_idx, neigh_idx], dim=0)
+        sub_idx_c = torch.cat([sub_idx, sub_idx], dim=0)
+        
+        
+        element = [xyz_c, neigh_idx_c, sub_idx_c] if is_training else [xyz, neigh_idx, sub_idx]
+        return element
+    #########################
 
 class Plot:
     @staticmethod

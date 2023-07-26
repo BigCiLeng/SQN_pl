@@ -6,6 +6,8 @@ from utils.helper_tool import DataProcessing as DP
 import numpy as np
 from sklearn.metrics import confusion_matrix
 
+import models.Lovasz_losses as L
+from torch_points_kernels import knn, three_interpolate, three_nn
 class Network(nn.Module):
 
     def __init__(self, config):
@@ -36,7 +38,7 @@ class Network(nn.Module):
             nn.init.constant_(self.fc0_bath.bias, 0)
 
       
-
+        self.data_aug = Data_augment(6, 1)
         self.dilated_res_blocks = nn.ModuleList()       # LFA 编码器部分
         d_in = 8
         for i in range(self.config.num_layers):
@@ -44,26 +46,31 @@ class Network(nn.Module):
             self.dilated_res_blocks.append(Dilated_res_block(d_in, d_out))
             d_in = 2 * d_out                      # 乘以二是因为每次LFA的输出是2倍的dout(实际的输出feature的维度是2倍的dout)
 
-        d_out = d_in
-        self.decoder_0 = pt_utils.Conv2d(d_in, d_out, kernel_size=(1,1), bn=True)       # 输入1024 输出1024的MLP（最中间的那层mlp）
+        # d_out = d_in
+        # self.decoder_0 = pt_utils.Conv2d(d_in, d_out, kernel_size=(1,1), bn=True)       # 输入1024 输出1024的MLP（最中间的那层mlp）
 
-        self.decoder_blocks = nn.ModuleList()       # 上采样 解码器部分
-        for j in range(self.config.num_layers):
-            # if j < 4:                                       
-            #     d_in = d_out + 2 * self.config.d_out[-j-2]          # -2是因为最后一层的维度不需要拼接 乘二还是因为实际的输出维度是2倍的dout # din=1024+512 维度增加是因为进行了拼接
-            #     d_out = 2 * self.config.d_out[-j-2]                 # 通过解码器里面的MLP调整回对应层的维度
-            # else:
-            #     d_in = 4 * self.config.d_out[-5]            # 第一个dout用了两次 4*16=64是因为64=32+32，由两个32进行拼接
-            #     d_out = 2 * self.config.d_out[-5]           # 调整输出维度至32
-            # self.decoder_blocks.append(pt_utils.Conv2d(d_in, d_out, kernel_size=(1,1), bn=True))
+        self.decoder_blocks = nn.ModuleList(
+            pt_utils.Conv2d(928, 256, kernel_size=(1,1), bn=True),
+            pt_utils.Conv2d(256, 128, kernel_size=(1,1), bn=True),
+            pt_utils.Conv2d(128, 64, kernel_size=(1,1), bn=True)
+
+        )       # 上采样 解码器部分
+        # for j in range(self.config.num_layers):
+        #     # if j < 4:                                       
+        #     #     d_in = d_out + 2 * self.config.d_out[-j-2]          # -2是因为最后一层的维度不需要拼接 乘二还是因为实际的输出维度是2倍的dout # din=1024+512 维度增加是因为进行了拼接
+        #     #     d_out = 2 * self.config.d_out[-j-2]                 # 通过解码器里面的MLP调整回对应层的维度
+        #     # else:
+        #     #     d_in = 4 * self.config.d_out[-5]            # 第一个dout用了两次 4*16=64是因为64=32+32，由两个32进行拼接
+        #     #     d_out = 2 * self.config.d_out[-5]           # 调整输出维度至32
+        #     # self.decoder_blocks.append(pt_utils.Conv2d(d_in, d_out, kernel_size=(1,1), bn=True))
             
-            if j < config.num_layers - 1:                                       
-                d_in = d_out + 2 * self.config.d_out[-j-2]          # -2是因为最后一层的维度不需要拼接 乘二还是因为实际的输出维度是2倍的dout # din=1024+512 维度增加是因为进行了拼接
-                d_out = 2 * self.config.d_out[-j-2]                 # 通过解码器里面的MLP调整回对应层的维度
-            else:
-                d_in = 4 * self.config.d_out[-config.num_layers]            # 第一个dout用了两次 4*16=64是因为64=32+32，由两个32进行拼接
-                d_out = 2 * self.config.d_out[-config.num_layers]           # 调整输出维度至32
-            self.decoder_blocks.append(pt_utils.Conv2d(d_in, d_out, kernel_size=(1,1), bn=True))
+        #     if j < config.num_layers - 1:                                       
+        #         d_in = d_out + 2 * self.config.d_out[-j-2]          # -2是因为最后一层的维度不需要拼接 乘二还是因为实际的输出维度是2倍的dout # din=1024+512 维度增加是因为进行了拼接
+        #         d_out = 2 * self.config.d_out[-j-2]                 # 通过解码器里面的MLP调整回对应层的维度
+        #     else:
+        #         d_in = 4 * self.config.d_out[-config.num_layers]            # 第一个dout用了两次 4*16=64是因为64=32+32，由两个32进行拼接
+        #         d_out = 2 * self.config.d_out[-config.num_layers]           # 调整输出维度至32
+        #     self.decoder_blocks.append(pt_utils.Conv2d(d_in, d_out, kernel_size=(1,1), bn=True))
             
 
         self.fc1 = pt_utils.Conv2d(d_out, 64, kernel_size=(1,1), bn=True)
@@ -71,11 +78,18 @@ class Network(nn.Module):
         self.dropout = nn.Dropout(0.5)
         self.fc3 = pt_utils.Conv2d(32, self.config.num_classes, kernel_size=(1,1), bn=False, activation=None)
 
-    def forward(self, end_points):
+    def forward(self, end_points, is_training):
 
         features = end_points['features']  # Batch*channel*npoints
-        features = self.fc0(features)
+        batch_anno_xyz = end_points['batch_anno_xyz']
 
+        if is_training:
+            feature_aug, feature_aug_t = data_augment(feature, self.config.num_points)
+            feature_aug = self.data_aug(feature, feature_aug, feature_aug_t)
+            feature = torch.cat([feature, feature_aug], dim=0)
+            batch_anno_xyz = torch.cat([batch_anno_xyz, batch_anno_xyz], dim=0)
+
+        features = self.fc0(features)
         # 下面三行是后面改的
         features = self.fc0_acti(features)
         features = features.transpose(1,2)
@@ -83,8 +97,9 @@ class Network(nn.Module):
 
         features = features.unsqueeze(dim=3)  # Batch*channel*npoints*1 # 增加一个维度，是为了使用2d的[1,1]大小的卷积
 
-        # ###########################Encoder############################
+        ###########################Encoder############################
         f_encoder_list = []         # 用于保存每次LFA后的特征，方便后面进行拼接操作
+        f_interp = []
         for i in range(self.config.num_layers):
             f_encoder_i = self.dilated_res_blocks[i](features, end_points['xyz'][i], end_points['neigh_idx'][i])    # 需要用到邻居的索引
 
@@ -93,25 +108,36 @@ class Network(nn.Module):
             if i == 0:
                 f_encoder_list.append(f_encoder_i)      # 第一次把还没降采样时的也加上，feature维度为32，32在decoder用了两次
             f_encoder_list.append(f_sampled_i)
-        # ###########################Encoder############################
 
-        features = self.decoder_0(f_encoder_list[-1])   # 中间那层MLP
+            ###########################Semantic Query############################
+            dist, idx = DP.knn_search(end_points['xyz'][i], batch_anno_xyz, 3)
+            neighbor_xyz = Building_block.gather_neighbour(end_points['xyz'][i], idx)
+            xyz_tile = torch.tile(torch.unsqueeze(batch_anno_xyz, dim=2), (1, 1, idx.shape[-1], 1))
+            relative_xyz = xyz_tile - neighbor_xyz
+            dist = torch.sum(torch.square(relative_xyz), dim=-1, keepdim=False)
+            weight = torch.ones_like(dist) / 3.0
+            interpolated_points = three_interpolate(torch.squeeze(feature, dim=-1).contiguous(), idx, weight)
+            f_interp.append(interpolated_points)
+            #####################################################################
 
-        # ###########################Decoder############################
-        f_decoder_list = []
-        for j in range(self.config.num_layers):
-            f_interp_i = self.nearest_interpolation(features, end_points['interp_idx'][-j - 1])                 # 先进行了插值
-            f_decoder_i = self.decoder_blocks[j](torch.cat([f_encoder_list[-j - 2], f_interp_i], dim=1))        # 和之前的特征进行拼接
+        # f_decoder_list = []
+        # for j in range(self.config.num_layers):
+        #     f_interp_i = self.nearest_interpolation(features, end_points['interp_idx'][-j - 1])                 # 先进行了插值
+        #     f_decoder_i = self.decoder_blocks[j](torch.cat([f_encoder_list[-j - 2], f_interp_i], dim=1))        # 和之前的特征进行拼接
 
-            features = f_decoder_i
-            f_decoder_list.append(f_decoder_i)
-        # ###########################Decoder############################
+        #     features = f_decoder_i
+        #     f_decoder_list.append(f_decoder_i)
+        ###########################Decoder############################
+        # Concatenation
+        interpolated_points = torch.cat(f_interp, dim=1).unsqueeze(-1)
+        for decoder in self.decoder_blocks:
+            interpolated_points = decoder(interpolated_points)
 
-        features = self.fc1(features)
-        features = self.fc2(features)
-        features = self.dropout(features)
-        features = self.fc3(features)
-        f_out = features.squeeze(3)
+        interpolated_points = self.fc1(interpolated_points)
+        interpolated_points = self.fc2(interpolated_points)
+        interpolated_points = self.dropout(interpolated_points)
+        interpolated_points = self.fc3(interpolated_points)
+        f_out = interpolated_points.squeeze(3)
 
         end_points['logits'] = f_out
         return end_points
@@ -286,7 +312,7 @@ class Att_pooling(nn.Module):
         return f_agg
 
 
-def compute_loss(end_points, cfg):
+def compute_loss(end_points, cfg, loss_type):
 
     logits = end_points['logits']       # 从网络中获取logit和label
     labels = end_points['labels']
@@ -307,21 +333,23 @@ def compute_loss(end_points, cfg):
     # Collect logits and labels that are not ignored
     valid_idx = ignored_bool == 0
     valid_logits = logits[valid_idx, :]
-    valid_labels_init = labels[valid_idx]
+    valid_labels = labels[valid_idx]
 
     # Reduce label values in the range of logit shape
-    reducing_list = torch.arange(0, cfg.num_classes).long()     
-    inserted_value = torch.zeros((1,)).long()
-    for ign_label in cfg.ignored_label_inds:
-        reducing_list = torch.cat([reducing_list[:ign_label], inserted_value, reducing_list[ign_label:]], 0)
-    valid_labels = torch.gather(reducing_list.to(valid_labels_init), 0, valid_labels_init)            # 这个操作没看懂
-    loss = get_loss(valid_logits, valid_labels, cfg.class_weights)
+    # reducing_list = torch.arange(0, cfg.num_classes).long()     
+    # inserted_value = torch.zeros((1,)).long()
+    # for ign_label in cfg.ignored_label_inds:
+    #     reducing_list = torch.cat([reducing_list[:ign_label], inserted_value, reducing_list[ign_label:]], 0)
+    # valid_labels = torch.gather(reducing_list.to(valid_labels_init), 0, valid_labels_init)            # 这个操作没看懂
+    
+    loss = get_loss(valid_logits, valid_labels, cfg.class_weights, cfg.num_classes, loss_type)
     end_points['valid_logits'], end_points['valid_labels'] = valid_logits, valid_labels     # valid_logits是ignore label之后的logit
     end_points['loss'] = loss
+
     return loss, end_points
 
 
-def get_loss(logits, labels, pre_cal_weights):
+def get_loss(logits, labels, pre_cal_weights, num_classes, loss_type):
     # calculate the weighted cross entropy according to the inverse frequency
     class_weights = torch.from_numpy(pre_cal_weights).float()
     class_weights = class_weights.to(logits)
@@ -331,4 +359,67 @@ def get_loss(logits, labels, pre_cal_weights):
     # logits = torch.distributions.utils.probs_to_logits(logits, is_binary=False)
     output_loss = criterion(logits, labels)
     output_loss = output_loss.mean()
+    if loss_type == 'lovas':
+        logits = logits.reshape(-1, num_classes)  # [-1, n_class]
+        probs = F.softmax(logits, dim=-1)  # [-1, class]
+        labels = labels.reshape(-1)
+        lovas_loss = L.lovasz_softmax(probs, labels, 'present')
+        output_loss = output_loss + lovas_loss
     return output_loss
+def get_loss_demo(logits, labels, pre_cal_weights, num_classes, loss_type='sqrt'):
+
+    class_weights = torch.tensor(pre_cal_weights, dtype=torch.float32).to(logits)
+    one_hot_labels = F.one_hot(labels.long(), num_classes=num_classes).float()
+    weights = torch.sum(class_weights * one_hot_labels, dim=1)
+    unweighted_losses = F.cross_entropy(logits, labels.long(), reduction='none')
+    weighted_losses = unweighted_losses * weights
+    output_loss = torch.mean(weighted_losses)
+
+    if loss_type == 'lovas':
+        logits = logits.reshape(-1, num_classes)  # [-1, n_class]
+        probs = F.softmax(logits, dim=-1)  # [-1, class]
+        labels = labels.reshape(-1)
+        lovas_loss = L.lovasz_softmax(probs, labels, 'present')
+        output_loss = output_loss + lovas_loss
+        return output_loss
+class Data_augment(nn.Module):
+    def __init__(self, d_in, d_out):
+        super().__init__()
+        self.att_activation = torch.nn.Linear(d_in, d_out, bias=False)
+    def forward(self, data, data_aug, data_aug_t, num_points):
+        data_aug_t = data_aug_t.reshape(-1, data.size(-1), num_points)
+        att_activation = self.att_activation(data_aug_t)
+        att_activation = att_activation.permute(0, 2, 1)
+        att_scores = F.softmax(att_activation, dim=-1)
+        data_aug = torch.multiply(data_aug, att_scores)
+        return data_aug
+def data_augment(data, num_points):
+    data_xyz = data[:, :, 0:3]
+    batch_size = data_xyz.shape[0]
+    aug_option = np.random.choice([0, 1, 2])
+    if aug_option == 0:
+        # mirror
+        data_xyz = torch.stack([data_xyz[:, :, 0], -data_xyz[:, :, 1], data_xyz[:, :, 2]], 2)
+    elif aug_option == 1:
+        # rotation
+        theta = 2 * 3.14592653 * np.random.rand()
+        R = np.array([[np.cos(theta), 0, -np.sin(theta)], [0, 1, 0], [np.sin(theta), 0, np.cos(theta)]])
+        R = torch.tensor(R, dtype=torch.float32)
+        data_xyz = data_xyz.reshape(-1, 3)
+        R = R.to(data)
+        data_xyz = torch.matmul(data_xyz, R)
+        data_xyz = data_xyz.reshape(-1, num_points, 3)
+    elif aug_option == 2:
+        # jitter
+        sigma = 0.01
+        clip = 0.05
+        jittered_point = np.clip(sigma * np.random.randn(num_points, 3), -1 * clip, clip)
+        jittered_point = np.tile(np.expand_dims(jittered_point, axis=0), [batch_size, 1, 1])
+        data_xyz = data_xyz + torch.tensor(jittered_point, dtype=torch.float32).to(data)
+    if data.shape[-1] > 3:
+        data_f = data[:, :, 3:]
+        data_aug = torch.cat([data_xyz, data_f], dim=-1)
+    else:
+        data_aug = data_xyz
+    data_aug_t = data_aug.permute(0, 2, 1)
+    return data_aug, data_aug_t

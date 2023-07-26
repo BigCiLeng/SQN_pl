@@ -25,7 +25,8 @@ class S3DIS(Dataset):
                                9: 'sofa',
                                10: 'bookcase',
                                11: 'board',
-                               12: 'clutter'}
+                               12: 'clutter',
+                               13: 'unlabel'}
         self.num_classes = len(self.label_to_names)
         self.label_values = np.sort([k for k, v in self.label_to_names.items()])        # 进行升序排序,将列表转换为ndarray格式
         self.label_to_idx = {l: i for i, l in enumerate(self.label_values)}             # {0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7, 8: 8, 9: 9, 10: 10, 11: 11, 12: 12}
@@ -38,7 +39,18 @@ class S3DIS(Dataset):
         self.val_split = 'Area_' + str(test_area_idx)                               # 哪个区域作为验证集
         self.all_files = glob.glob(join(self.path, 'original_ply', '*.ply'))        # 获取所有的ply文件，返回一个列表      
 
-        self.size = len(self.all_files)  
+        self.size = len(self.all_files)
+
+        ########## SQN ##########
+        # initialize
+        if '%' in cfg.labeled_point:
+            r = float(cfg.labeled_point[:-1]) / 100
+            self.num_with_anno_per_batch = max(int(cfg.num_points * r), 1)
+        else:
+            self.num_with_anno_per_batch = cfg.num_classes
+
+        self.num_per_class = np.zeros(self.num_classes)
+        #########################
 
         # Initiate containers
         self.val_proj = []
@@ -71,6 +83,41 @@ class S3DIS(Dataset):
             data = read_ply(sub_ply_file)                                                   # data['red'] 就这么读出来的是一个一维向量，存放了所有red的颜色深度
             sub_colors = np.vstack((data['red'], data['green'], data['blue'])).T            # 得到一个n*3的矩阵        
             sub_labels = data['class']
+
+            ########## SQN ##########
+            # ======================================== #
+            #          Random Sparse Annotation        #
+            # ======================================== #
+            if cloud_split == 'training':
+                if '%' in cfg.labeled_point:
+                    num_pts = len(sub_labels)
+                    r = float(cfg.labeled_point[:-1]) / 100
+                    num_with_anno = max(int(num_pts * r), 1)
+                    num_without_anno = num_pts - num_with_anno
+                    idx_without_anno = np.random.choice(num_pts, num_without_anno, replace=False)
+                    sub_labels[idx_without_anno] = cfg.ignored_labels[0]
+                else:
+                    for i in range(self.num_classes):
+                        ind_per_class = np.where(sub_labels == i)[0]  # index of points belongs to a specific class
+                        num_per_class = len(ind_per_class)
+                        if num_per_class > 0:
+                            num_with_anno = int(cfg.labeled_point)
+                            num_without_anno = num_per_class - num_with_anno
+                            idx_without_anno = np.random.choice(ind_per_class, num_without_anno, replace=False)
+                            sub_labels[idx_without_anno] = cfg.ignored_labels[0]
+
+                # =================================================================== #
+                #            retrain the model with predicted pseudo labels           #
+                # =================================================================== #
+                if cfg.retrain:
+                    pseudo_label_path = './test'
+                    temp = read_ply(join(pseudo_label_path, cloud_name + '.ply'))
+                    pseudo_label = temp['pred']
+                    pseudo_label_ratio = 0.01
+                    pseudo_label[sub_labels != 0] = sub_labels[sub_labels != 0]
+                    sub_labels = pseudo_label
+                    self.num_with_anno_per_batch = int(cfg.num_points * pseudo_label_ratio)
+            #########################
 
             # Read pkl with search tree
             with open(kd_tree_file, 'rb') as f:
@@ -133,8 +180,8 @@ class S3DISSampler(Dataset):
         # 通过这样更新possibility的方式，使得抽过的点仅有很小的可能被抽中，从而实现类似穷举的目的。
 
     def __getitem__(self, item):
-        selected_pc, selected_labels, selected_idx, cloud_ind = self.spatially_regular_gen(item, self.split)
-        return selected_pc, selected_labels, selected_idx, cloud_ind
+        selected_pc, selected_labels, selected_idx, cloud_ind, xyz_with_anno, labels_with_anno    = self.spatially_regular_gen(item, self.split)
+        return selected_pc, selected_labels, selected_idx, cloud_ind, xyz_with_anno, labels_with_anno  
 
     def __len__(self):
         
@@ -187,6 +234,30 @@ class S3DISSampler(Dataset):
             queried_pc_xyz, queried_pc_colors, queried_idx, queried_pc_labels = \
                 DP.data_aug(queried_pc_xyz, queried_pc_colors, queried_pc_labels, queried_idx, cfg.num_points) 
 
+        ########## SQN ##########
+        if split == 'training':
+            unique_label_value = np.unique(queried_pc_labels)
+            if len(unique_label_value) <= 1:
+                return None, None, None, None, None, None
+            else:
+                # ================================================================== #
+                #            Keep the same number of labeled points per batch        #
+                # ================================================================== #
+                idx_with_anno = np.where(queried_pc_labels != self.ignored_labels[0])[0]
+                num_with_anno = len(idx_with_anno)
+                if num_with_anno > self.num_with_anno_per_batch:
+                    idx_with_anno = np.random.choice(idx_with_anno, self.num_with_anno_per_batch, replace=False)
+                elif num_with_anno < self.num_with_anno_per_batch:
+                    dup_idx = np.random.choice(idx_with_anno, self.num_with_anno_per_batch - len(idx_with_anno))
+                    idx_with_anno = np.concatenate([idx_with_anno, dup_idx], axis=0)
+                xyz_with_anno = queried_pc_xyz[idx_with_anno]
+                labels_with_anno = queried_pc_labels[idx_with_anno]
+        else:
+            xyz_with_anno = queried_pc_xyz
+            labels_with_anno = queried_pc_labels
+        #########################
+
+
 
         queried_pc_xyz = torch.from_numpy(queried_pc_xyz).float()           # 转换回张量格式
         queried_pc_colors = torch.from_numpy(queried_pc_colors).float()
@@ -194,12 +265,17 @@ class S3DISSampler(Dataset):
         queried_idx = torch.from_numpy(queried_idx).float() # keep float here?
         cloud_idx = torch.from_numpy(np.array([cloud_idx], dtype=np.int32)).float()
 
+        ########## SQN ##########
+        xyz_with_anno = torch.from_numpy(xyz_with_anno).float()
+        labels_with_anno = torch.from_numpy(labels_with_anno).long()
+        #########################
+
         points = torch.cat( (queried_pc_xyz, queried_pc_colors), 1)
     
-        return points, queried_pc_labels, queried_idx, cloud_idx      
+        return points, queried_pc_labels, queried_idx, cloud_idx, xyz_with_anno, labels_with_anno  
 
 
-    def tf_map(self, batch_xyz, batch_features, batch_label, batch_pc_idx, batch_cloud_idx):    # 进行下采样和KNN的索引记录，为后面网络做准备
+    def tf_map(self, batch_xyz, batch_features, batch_label, batch_pc_idx, batch_cloud_idx, batch_anno_xyz, batch_anno_labels):    # 进行下采样和KNN的索引记录，为后面网络做准备
         batch_features = np.concatenate([batch_xyz, batch_features], axis=-1)
         input_points = []
         input_neighbors = []
@@ -218,29 +294,33 @@ class S3DISSampler(Dataset):
             batch_xyz = sub_points
 
         input_list = input_points + input_neighbors + input_pools + input_up_samples
-        input_list += [batch_features, batch_label, batch_pc_idx, batch_cloud_idx]
+        input_list += [batch_features, batch_label, batch_pc_idx, batch_cloud_idx, batch_anno_xyz, batch_anno_labels]
 
         return input_list
 
     # 这个函数是每从dataloader拿一次数据执行一次
     def collate_fn(self,batch):
 
-        selected_pc, selected_labels, selected_idx, cloud_ind = [],[],[],[]
+        selected_pc, selected_labels, selected_idx, cloud_ind, xyz_with_anno, labels_with_anno = [],[],[],[]
         for i in range(len(batch)):
             selected_pc.append(batch[i][0])
             selected_labels.append(batch[i][1])
             selected_idx.append(batch[i][2])
             cloud_ind.append(batch[i][3])
+            xyz_with_anno.append(batch[i][4])
+            labels_with_anno.append(batch[i][5])
 
         selected_pc = np.stack(selected_pc)                     # 将列表堆叠起来形成矩阵，维度为（batch，nums，feature）=（6，40960，6）
         selected_labels = np.stack(selected_labels)
         selected_idx = np.stack(selected_idx)
         cloud_ind = np.stack(cloud_ind)
+        xyz_with_anno = np.stack(xyz_with_anno)
+        labels_with_anno = np.stack(labels_with_anno)
 
         selected_xyz = selected_pc[:, :, 0:3]
         selected_features = selected_pc[:, :, 3:6]
 
-        flat_inputs = self.tf_map(selected_xyz, selected_features, selected_labels, selected_idx, cloud_ind) # 返回值是一个包含24个列表的列表
+        flat_inputs = self.tf_map(selected_xyz, selected_features, selected_labels, selected_idx, cloud_ind, xyz_with_anno, labels_with_anno) # 返回值是一个包含24个列表的列表
 
         num_layers = cfg.num_layers
         inputs = {}
@@ -262,7 +342,8 @@ class S3DISSampler(Dataset):
         inputs['labels'] = torch.from_numpy(flat_inputs[4 * num_layers + 1]).long()
         inputs['input_inds'] = torch.from_numpy(flat_inputs[4 * num_layers + 2]).long()
         inputs['cloud_inds'] = torch.from_numpy(flat_inputs[4 * num_layers + 3]).long()
-
+        inputs['batch_anno_xyz'] = torch.from_numpy(flat_inputs[4 * num_layers + 4]).float()
+        inputs['batch_anno_labels'] = torch.from_numpy(flat_inputs[4 * num_layers + 5]).long()
         return inputs
 
 

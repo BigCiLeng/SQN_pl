@@ -2,8 +2,8 @@
 Author: BigCiLeng && bigcileng@outlook.com
 Date: 2023-07-25 11:53:45
 LastEditors: BigCiLeng && bigcileng@outlook.com
-LastEditTime: 2023-07-26 02:43:50
-FilePath: /RandLA-Net-Pytorch-New/randla_system.py
+LastEditTime: 2023-07-27 00:24:19
+FilePath: \RandLA_pl\sqn_system.py
 Description: 
 
 Copyright (c) 2023 by bigcileng@outlook.com, All Rights Reserved. 
@@ -39,7 +39,7 @@ import time
 
 # mine
 from utils.helper_tool import ConfigS3DIS as cfg
-from models.RandLANet import Network, compute_loss, compute_acc, IoUCalculator
+from models.SQN import Network, compute_loss, compute_acc, IoUCalculator
 from dataset.s3dis_dataset import S3DIS, S3DISSampler
 
 def evaluate(model, points):
@@ -48,19 +48,24 @@ def evaluate(model, points):
         scores = model(points)
     return scores
 
-class RandLA_System(pl.LightningModule):
+class SQN_System(pl.LightningModule):
 
     def __init__(self, hparams):
-        super(RandLA_System, self).__init__()
+        super(SQN_System, self).__init__()
         self.save_hyperparameters()
+        cfg.retrain = self.hparams['hparams'].retrain
         self.model = Network(cfg)
         self.iou_calc = IoUCalculator(cfg) # 初始化IOU计算器
 
+        if self.hparams['hparams'].dataset_name == 'S3DIS' or self.hparams['hparams'].dataset_name == 'Semantic3D':
+            self.loss_type = 'wce'  # sqrt, lovas
+        else:
+            self.loss_type = 'sqrt'  # wce, lovas
         self.training_step_outputs = []
         self.validation_step_outputs = []
         
-    def forward(self, input):
-        return self.model(input)
+    def forward(self, input, is_training):
+        return self.model(input, is_training)
 
     def decode_batch(self, batch):
         return batch
@@ -117,9 +122,10 @@ class RandLA_System(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):    
         # Forward pass
-        end_points = self(batch)
-
-        loss, end_points = compute_loss(end_points, cfg)
+        input = self.decode_batch(batch)
+        end_points = self(batch, is_training=True)
+        end_points['labels'] = torch.cat([input['labels'], input['labels']], dim=0)
+        loss, end_points = compute_loss(end_points, cfg, self.loss_type)
 
         acc, end_points = compute_acc(end_points)
         self.iou_calc.add_data(end_points)               # 保存训练结果，用于计算iou
@@ -203,7 +209,7 @@ def train(args):
                                     )
         
     wandb_logger = WandbLogger(project="RandLA", name=args.name)
-    system = RandLA_System(hparams=args)
+    system = SQN_System(hparams=args)
     trainer = pl.Trainer(
                          logger=wandb_logger,
                          max_epochs=cfg.max_epoch,
@@ -219,7 +225,7 @@ def train(args):
     trainer.fit(system)
 
 def test(args):
-    system = RandLA_System.load_from_checkpoint(args.load)
+    system = SQN_System.load_from_checkpoint(args.load)
     trainer = pl.Trainer()
     trainer.test(system)
 
@@ -227,7 +233,7 @@ if __name__ == '__main__':
 
     """Parse program arguments"""
     parser = argparse.ArgumentParser(
-        prog='RandLA-Net',
+        prog='SQN',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     base = parser.add_argument_group('Base options')
@@ -242,6 +248,8 @@ if __name__ == '__main__':
 
     expr.add_argument('--load', type=str, help='model to load',
                         default='')
+    expr.add_argument('--retrain', type=bool, help='retrain the model with predicted pseudo labels',
+                        default=False)
 
     param.add_argument('--adam_lr', type=float, help='learning rate of the optimizer',
                         default=1e-2)

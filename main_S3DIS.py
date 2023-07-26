@@ -1,6 +1,6 @@
 import warnings
 from utils.helper_tool import ConfigS3DIS as cfg
-from models.RandLANet import Network, compute_loss, compute_acc, IoUCalculator
+from models.SQN import Network, compute_loss, compute_acc, IoUCalculator
 from dataset.s3dis_dataset import S3DIS, S3DISSampler
 import numpy as np
 import os, argparse
