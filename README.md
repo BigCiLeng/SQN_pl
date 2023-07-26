@@ -2,7 +2,7 @@
  * @Author: BigCiLeng && bigcileng@outlook.com
  * @Date: 2023-07-25 11:49:49
  * @LastEditors: BigCiLeng && bigcileng@outlook.com
- * @LastEditTime: 2023-07-26 13:02:27
+ * @LastEditTime: 2023-07-26 13:10:41
  * @FilePath: /RandLA-Net-Pytorch-New/README.md
  * @Description: 
  * 
@@ -38,7 +38,7 @@ sh compile_op.sh
 
 ```
 cd scripts/
-sh train_S3DIS.py
+sh train_S3DIS.sh
 ```
 
 ## Test a model(S3DIS for example)
