@@ -1,5 +1,5 @@
-from helper_tool import DataProcessing as DP
-from helper_tool import ConfigSemanticKITTI as cfg
+from utils.helper_tool import DataProcessing as DP
+from utils.helper_tool import ConfigSemanticKITTI as cfg
 from os.path import join
 import numpy as np
 import os, pickle

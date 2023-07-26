@@ -8,8 +8,8 @@ BASE_DIR = dirname(abspath(__file__))
 ROOT_DIR = dirname(BASE_DIR)
 sys.path.append(BASE_DIR)
 sys.path.append(ROOT_DIR)
-from helper_ply import write_ply
-from helper_tool import DataProcessing as DP
+from utils.helper_ply import write_ply
+from utils.helper_tool import DataProcessing as DP
 
 grid_size = 0.06
 dataset_path = '/data/semantic3d/original_data'

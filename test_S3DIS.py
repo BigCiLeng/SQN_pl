@@ -1,6 +1,6 @@
-from helper_tool import ConfigS3DIS as cfg
-from RandLANet import Network, compute_loss, compute_acc, IoUCalculator
-from s3dis_dataset import S3DIS, S3DISSampler
+from utils.helper_tool import ConfigS3DIS as cfg
+from models.RandLANet import Network, compute_loss, compute_acc, IoUCalculator
+from dataset.s3dis_dataset import S3DIS, S3DISSampler
 import numpy as np
 import os, argparse
 # from os.path import dirname, abspath, join
@@ -11,8 +11,8 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from sklearn.metrics import confusion_matrix
-from helper_tool import DataProcessing as DP
-from helper_ply import write_ply
+from utils.helper_tool import DataProcessing as DP
+from utils.helper_ply import write_ply
 from datetime import datetime
 import time
 

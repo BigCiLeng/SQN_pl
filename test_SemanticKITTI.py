@@ -1,8 +1,8 @@
 import warnings
-from helper_tool import ConfigSemanticKITTI as cfg
-from helper_tool import DataProcessing as DP
-from RandLANet import Network, compute_loss, compute_acc, IoUCalculator  
-from semantic_kitti_dataset import SemanticKITTI
+from utils.helper_tool import ConfigSemanticKITTI as cfg
+from utils.helper_tool import DataProcessing as DP
+from models.RandLANet import Network, compute_loss, compute_acc, IoUCalculator  
+from dataset.semantic_kitti_dataset import SemanticKITTI
 import numpy as np
 import os, argparse
 from os.path import exists, join, isfile, dirname, abspath

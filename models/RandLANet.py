@@ -1,11 +1,10 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import pytorch_utils as pt_utils
-from helper_tool import DataProcessing as DP
+import models.pytorch_utils as pt_utils
+from utils.helper_tool import DataProcessing as DP
 import numpy as np
 from sklearn.metrics import confusion_matrix
-
 
 class Network(nn.Module):
 
@@ -187,7 +186,7 @@ class IoUCalculator:
         val_total_seen += len(labels_valid) # 累加一共的点
 
         # 计算混淆矩阵（混淆矩阵的列是预测类别，行是真实类别，描述的是正确分类和误分类的个数）
-        conf_matrix = confusion_matrix(labels_valid, pred_valid, np.arange(0, self.cfg.num_classes, 1)) 
+        conf_matrix = confusion_matrix(labels_valid, pred_valid, labels=np.arange(0, self.cfg.num_classes, 1)) 
         self.gt_classes += np.sum(conf_matrix, axis=1)      # 按行加起来，表示某个类别一共有多少个真实的数据点（ground truth）
         self.positive_classes += np.sum(conf_matrix, axis=0)    # 按列加起来，表示某个类别被预测出多少个数据点
         self.true_positive_classes += np.diagonal(conf_matrix)  # 取出对角线上的元素
@@ -202,7 +201,10 @@ class IoUCalculator:
                 iou_list.append(0.0)            # 三者同时为零才有可能分母为零，所以iou=0
         mean_iou = sum(iou_list) / float(self.cfg.num_classes)  # 除以类别数
         return mean_iou, iou_list
-
+    def clear(self):
+        self.gt_classes = [0 for _ in range(self.cfg.num_classes)]               # 初始化一个长度为num_classes，元素全为0的列表
+        self.positive_classes = [0 for _ in range(self.cfg.num_classes)]         # 同上  
+        self.true_positive_classes = [0 for _ in range(self.cfg.num_classes)]
 
 
 class Dilated_res_block(nn.Module):
@@ -284,7 +286,7 @@ class Att_pooling(nn.Module):
         return f_agg
 
 
-def compute_loss(end_points, cfg, device):
+def compute_loss(end_points, cfg):
 
     logits = end_points['logits']       # 从网络中获取logit和label
     labels = end_points['labels']
@@ -298,7 +300,7 @@ def compute_loss(end_points, cfg, device):
     #     ignored_bool = ignored_bool | (labels == ign_label)
 
     # ignored_bool = labels == 0                              
-    ignored_bool = torch.zeros(len(labels), dtype=torch.bool).to(device)
+    ignored_bool = torch.zeros(len(labels), dtype=torch.bool)
     for ign_label in cfg.ignored_label_inds:                                    # 这里没有问题，有问题的是后面
         ignored_bool = ignored_bool | (labels == ign_label)
 
@@ -308,23 +310,25 @@ def compute_loss(end_points, cfg, device):
     valid_labels_init = labels[valid_idx]
 
     # Reduce label values in the range of logit shape
-    reducing_list = torch.arange(0, cfg.num_classes).long().to(device)       
-    inserted_value = torch.zeros((1,)).long().to(device)
+    reducing_list = torch.arange(0, cfg.num_classes).long()     
+    inserted_value = torch.zeros((1,)).long()
     for ign_label in cfg.ignored_label_inds:
         reducing_list = torch.cat([reducing_list[:ign_label], inserted_value, reducing_list[ign_label:]], 0)
-    valid_labels = torch.gather(reducing_list, 0, valid_labels_init)            # 这个操作没看懂
-    loss = get_loss(valid_logits, valid_labels, cfg.class_weights, device)
+    valid_labels = torch.gather(reducing_list.to(valid_labels_init), 0, valid_labels_init)            # 这个操作没看懂
+    loss = get_loss(valid_logits, valid_labels, cfg.class_weights)
     end_points['valid_logits'], end_points['valid_labels'] = valid_logits, valid_labels     # valid_logits是ignore label之后的logit
     end_points['loss'] = loss
     return loss, end_points
 
 
-def get_loss(logits, labels, pre_cal_weights, device):
+def get_loss(logits, labels, pre_cal_weights):
     # calculate the weighted cross entropy according to the inverse frequency
-    class_weights = torch.from_numpy(pre_cal_weights).float().to(device)
+    class_weights = torch.from_numpy(pre_cal_weights).float()
+    class_weights = class_weights.to(logits)
     # one_hot_labels = F.one_hot(labels, self.config.num_classes)
 
     criterion = nn.CrossEntropyLoss(weight=class_weights.reshape([-1]), reduction='none')   # 这里改了一下维度，新版本pytorch需要一维的权重数据
+    # logits = torch.distributions.utils.probs_to_logits(logits, is_binary=False)
     output_loss = criterion(logits, labels)
     output_loss = output_loss.mean()
     return output_loss

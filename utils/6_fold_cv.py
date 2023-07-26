@@ -4,8 +4,8 @@ import glob, os, sys
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(ROOT_DIR)
-from helper_ply import read_ply
-from helper_tool import Plot
+from utils.helper_ply import read_ply
+from utils.helper_tool import Plot
 
 if __name__ == '__main__':
     base_dir = '/data/liuxuexun/dataset/S3DIS/myresult'

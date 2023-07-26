@@ -1,8 +1,18 @@
+<!--
+ * @Author: BigCiLeng && bigcileng@outlook.com
+ * @Date: 2023-07-25 11:49:49
+ * @LastEditors: BigCiLeng && bigcileng@outlook.com
+ * @LastEditTime: 2023-07-26 13:02:27
+ * @FilePath: /RandLA-Net-Pytorch-New/README.md
+ * @Description: 
+ * 
+ * Copyright (c) 2023 by bigcileng@outlook.com, All Rights Reserved. 
+-->
 # RandLA-Net: Efficient Semantic Segmentation of Large-Scale Point Clouds
 
-This repository contains a PyTorch implementation of [RandLA-Net](http://arxiv.org/abs/1911.11236) on S3DIS and Semantickitti.
+This repository contains a PyTorch-lightning implementation of [RandLA-Net](http://arxiv.org/abs/1911.11236) on S3DIS and Semantickitti.
 
-**This repository is mainly based on the [repository](https://github.com/qiqihaer/RandLA-Net-pytorch)**
+**This repository is mainly based on the [repository](https://github.com/mellody11/RandLA-Net-Pytorch-New)**
 
 ## Preparation(S3DIS for example)
 
@@ -27,37 +37,20 @@ sh compile_op.sh
 ## Train a model(S3DIS for example)
 
 ```
-  python main_S3DIS.py
+cd scripts/
+sh train_S3DIS.py
 ```
 
 ## Test a model(S3DIS for example)
 
 ```
-  python test_S3DIS.py
+
 ```
 
 ## Results
 
 ### S3DIS
-We train this network for 100 epoches, and the eval results(after voting) in the Area 5 are as follows: mIoU = 62.59%
 
-```
---------------------------------------------------------------------------------------
-62.59 | 91.92 96.32 81.43  0.00 20.59 61.54 55.26 75.03 84.95 56.12 72.33 65.93 52.29 
---------------------------------------------------------------------------------------
-```
-
-while [SQN](https://github.com/QingyongHu/SQN) shows the result(mIoU) of RandLA-Net of Area5 is 63.59.
-
-our results are close to the original paper.
 
 ### SemanticKITTI
-We train the network for 100 epoches, and the eval results(after voting) in the Seq 08 are as follows: mIoU = 54.62%
 
-```
---------------------------------------------------------------------------------------------------------------------------
-54.62 | 93.12 18.31 30.68 79.83 45.59 51.81 70.18  0.00 92.15 41.53 78.42  1.09 87.61 46.32 84.30 58.67 72.12 52.28 33.67 
---------------------------------------------------------------------------------------------------------------------------
-```
-
-The checkpoint is in the output folder.

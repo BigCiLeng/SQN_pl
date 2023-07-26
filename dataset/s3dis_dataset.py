@@ -1,10 +1,10 @@
-from helper_tool import DataProcessing as DP
-from helper_tool import ConfigS3DIS as cfg
+from utils.helper_tool import DataProcessing as DP
+from utils.helper_tool import ConfigS3DIS as cfg
 from os.path import join
 import numpy as np
 import time, pickle, argparse, glob, os
 from os.path import join
-from helper_ply import read_ply
+from utils.helper_ply import read_ply
 from torch.utils.data import DataLoader, Dataset, IterableDataset
 import torch
 
@@ -12,7 +12,7 @@ import torch
 class S3DIS(Dataset):
     def __init__(self, test_area_idx=5):
         self.name = 'S3DIS'
-        self.path = '/data/liuxuexun/dataset/S3DIS'
+        self.path = cfg.dataset_dir
         self.label_to_names = {0: 'ceiling',
                                1: 'floor',
                                2: 'wall',
@@ -29,11 +29,11 @@ class S3DIS(Dataset):
         self.num_classes = len(self.label_to_names)
         self.label_values = np.sort([k for k, v in self.label_to_names.items()])        # 进行升序排序,将列表转换为ndarray格式
         self.label_to_idx = {l: i for i, l in enumerate(self.label_values)}             # {0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7, 8: 8, 9: 9, 10: 10, 11: 11, 12: 12}
-        self.ignored_labels = np.array([])                                              # 这个数据集上没有ignored标签
+        self.ignored_labels = cfg.ignored_labels                                           # 这个数据集上没有ignored标签
 
         cfg.ignored_label_inds = [self.label_to_idx[ign_label] for ign_label in self.ignored_labels]
         cfg.class_weights = DP.get_class_weights('S3DIS')
-        cfg.name = 'S3DIS'
+        # cfg.name = 'S3DIS'
 
         self.val_split = 'Area_' + str(test_area_idx)                               # 哪个区域作为验证集
         self.all_files = glob.glob(join(self.path, 'original_ply', '*.ply'))        # 获取所有的ply文件，返回一个列表      

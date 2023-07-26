@@ -8,8 +8,8 @@ BASE_DIR = dirname(abspath(__file__))   # 当前文件夹绝对路径
 ROOT_DIR = dirname(BASE_DIR)            # 上一级文件夹路径    
 sys.path.append(BASE_DIR)
 sys.path.append(ROOT_DIR)               # 将目录添加到系统路径之后就可以添加自己的包
-from helper_ply import write_ply        
-from helper_tool import DataProcessing as DP
+from utils.helper_ply import write_ply        
+from utils.helper_tool import DataProcessing as DP
 
 # dataset_path = '/data/S3DIS/Stanford3dDataset_v1.2_Aligned_Version'
 dataset_path = '/data/liuxuexun/dataset/S3DIS/Stanford3dDataset_v1.2_Aligned_Version'     # 我的路径
