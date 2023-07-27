@@ -2,8 +2,8 @@
 Author: BigCiLeng && bigcileng@outlook.com
 Date: 2023-07-25 11:53:45
 LastEditors: BigCiLeng && bigcileng@outlook.com
-LastEditTime: 2023-07-27 00:24:19
-FilePath: \RandLA_pl\sqn_system.py
+LastEditTime: 2023-07-27 18:26:09
+FilePath: /SQN_pl/sqn_system.py
 Description: 
 
 Copyright (c) 2023 by bigcileng@outlook.com, All Rights Reserved. 
@@ -124,7 +124,7 @@ class SQN_System(pl.LightningModule):
         # Forward pass
         input = self.decode_batch(batch)
         end_points = self(batch, is_training=True)
-        end_points['labels'] = torch.cat([input['labels'], input['labels']], dim=0)
+        end_points['batch_anno_labels'] = torch.cat([input['batch_anno_labels'], input['batch_anno_labels']], dim=0)
         loss, end_points = compute_loss(end_points, cfg, self.loss_type)
 
         acc, end_points = compute_acc(end_points)
@@ -156,9 +156,9 @@ class SQN_System(pl.LightningModule):
         # Forward pass
         self.model.eval()
         with torch.no_grad():
-            end_points = self(batch)
+            end_points = self(batch, is_training=False)
 
-        loss, end_points = compute_loss(end_points, cfg)
+        loss, end_points = compute_loss(end_points, cfg, self.loss_type)
 
         acc, end_points = compute_acc(end_points)
         self.iou_calc.add_data(end_points)               # 保存训练结果，用于计算iou

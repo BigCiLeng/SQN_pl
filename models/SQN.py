@@ -38,7 +38,7 @@ class Network(nn.Module):
             nn.init.constant_(self.fc0_bath.bias, 0)
 
       
-        self.data_aug = Data_augment(6, 1)
+        self.data_aug = Data_augment(config.num_points, 1)
         self.dilated_res_blocks = nn.ModuleList()       # LFA 编码器部分
         d_in = 8
         for i in range(self.config.num_layers):
@@ -49,12 +49,12 @@ class Network(nn.Module):
         # d_out = d_in
         # self.decoder_0 = pt_utils.Conv2d(d_in, d_out, kernel_size=(1,1), bn=True)       # 输入1024 输出1024的MLP（最中间的那层mlp）
 
-        self.decoder_blocks = nn.ModuleList(
-            pt_utils.Conv2d(928, 256, kernel_size=(1,1), bn=True),
+        self.decoder_blocks = nn.ModuleList([
+            pt_utils.Conv2d(1952, 256, kernel_size=(1,1), bn=True),
             pt_utils.Conv2d(256, 128, kernel_size=(1,1), bn=True),
             pt_utils.Conv2d(128, 64, kernel_size=(1,1), bn=True)
 
-        )       # 上采样 解码器部分
+        ])       # 上采样 解码器部分
         # for j in range(self.config.num_layers):
         #     # if j < 4:                                       
         #     #     d_in = d_out + 2 * self.config.d_out[-j-2]          # -2是因为最后一层的维度不需要拼接 乘二还是因为实际的输出维度是2倍的dout # din=1024+512 维度增加是因为进行了拼接
@@ -73,7 +73,7 @@ class Network(nn.Module):
         #     self.decoder_blocks.append(pt_utils.Conv2d(d_in, d_out, kernel_size=(1,1), bn=True))
             
 
-        self.fc1 = pt_utils.Conv2d(d_out, 64, kernel_size=(1,1), bn=True)
+        self.fc1 = pt_utils.Conv2d(64, 64, kernel_size=(1,1), bn=True)
         self.fc2 = pt_utils.Conv2d(64, 32, kernel_size=(1,1), bn=True)
         self.dropout = nn.Dropout(0.5)
         self.fc3 = pt_utils.Conv2d(32, self.config.num_classes, kernel_size=(1,1), bn=False, activation=None)
@@ -84,11 +84,13 @@ class Network(nn.Module):
         batch_anno_xyz = end_points['batch_anno_xyz']
 
         if is_training:
-            feature_aug, feature_aug_t = data_augment(feature, self.config.num_points)
-            feature_aug = self.data_aug(feature, feature_aug, feature_aug_t)
-            feature = torch.cat([feature, feature_aug], dim=0)
+            features_aug, features_aug_t = data_augment(features, self.config.num_points)
+            features_aug = self.data_aug(features, features_aug, features_aug_t, self.config.num_points)
+            features = torch.cat([features, features_aug], dim=0)
             batch_anno_xyz = torch.cat([batch_anno_xyz, batch_anno_xyz], dim=0)
-
+            end_points['xyz'] = [torch.cat([xyz, xyz], dim=0) for xyz in end_points['xyz']] 
+            end_points['neigh_idx'] = [torch.cat([neigh_idx, neigh_idx], dim=0) for neigh_idx in end_points['neigh_idx']] 
+            end_points['sub_idx'] = [torch.cat([sub_idx, sub_idx], dim=0) for sub_idx in end_points['sub_idx']] 
         features = self.fc0(features)
         # 下面三行是后面改的
         features = self.fc0_acti(features)
@@ -110,13 +112,17 @@ class Network(nn.Module):
             f_encoder_list.append(f_sampled_i)
 
             ###########################Semantic Query############################
-            dist, idx = DP.knn_search(end_points['xyz'][i], batch_anno_xyz, 3)
-            neighbor_xyz = Building_block.gather_neighbour(end_points['xyz'][i], idx)
+            # dist, idx = three_nn(end_points['xyz'][i], batch_anno_xyz)
+            idx = DP.knn_search(end_points['xyz'][i].cpu(), batch_anno_xyz.cpu(), 3)
+            idx = torch.from_numpy(idx).long()
+            neighbor_xyz = Building_block.gather_neighbour(end_points['xyz'][i].cpu(), idx)
             xyz_tile = torch.tile(torch.unsqueeze(batch_anno_xyz, dim=2), (1, 1, idx.shape[-1], 1))
-            relative_xyz = xyz_tile - neighbor_xyz
+            relative_xyz = xyz_tile - neighbor_xyz.to(xyz_tile)
             dist = torch.sum(torch.square(relative_xyz), dim=-1, keepdim=False)
             weight = torch.ones_like(dist) / 3.0
-            interpolated_points = three_interpolate(torch.squeeze(feature, dim=-1).contiguous(), idx, weight)
+            f_encoder_i = torch.squeeze(f_encoder_i, dim=-1).contiguous()
+            idx = idx.to(f_encoder_i).int()
+            interpolated_points = three_interpolate(f_encoder_i, idx, weight)
             f_interp.append(interpolated_points)
             #####################################################################
 
@@ -285,10 +291,11 @@ class Building_block(nn.Module):
         return relative_feature
 
     @staticmethod
-    def gather_neighbour(pc, neighbor_idx):  # pc: batch*npoint*channel(xyz或者feature)
+    def gather_neighbour(pc, neighbor_idx, num_points = None):  # pc: batch*npoint*channel(xyz或者feature)
         # gather the coordinates or features of neighboring points
         batch_size = pc.shape[0]
-        num_points = pc.shape[1]
+        if num_points is None:
+            num_points = neighbor_idx.shape[1]
         d = pc.shape[2]
         index_input = neighbor_idx.reshape(batch_size, -1)      # 这个gather理解起来比较难，要多想想
         features = torch.gather(pc, 1, index_input.unsqueeze(-1).repeat(1, 1, pc.shape[2]))     # 从原始点的xyz坐标（或feature）中，找到16个近邻点的坐标（或feature）（注意这个pc矩阵是有序的，其索引值和neighbor_idx有关系）
@@ -315,7 +322,7 @@ class Att_pooling(nn.Module):
 def compute_loss(end_points, cfg, loss_type):
 
     logits = end_points['logits']       # 从网络中获取logit和label
-    labels = end_points['labels']
+    labels = end_points['batch_anno_labels']
 
     logits = logits.transpose(1, 2).reshape(-1, cfg.num_classes)        # 将logit和label的batch维度消去数据下放到点数目的维度
     labels = labels.reshape(-1)
@@ -326,7 +333,7 @@ def compute_loss(end_points, cfg, loss_type):
     #     ignored_bool = ignored_bool | (labels == ign_label)
 
     # ignored_bool = labels == 0                              
-    ignored_bool = torch.zeros(len(labels), dtype=torch.bool)
+    ignored_bool = torch.zeros(len(labels)).to(labels).bool()
     for ign_label in cfg.ignored_label_inds:                                    # 这里没有问题，有问题的是后面
         ignored_bool = ignored_bool | (labels == ign_label)
 

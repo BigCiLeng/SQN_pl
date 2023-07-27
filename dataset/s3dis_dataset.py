@@ -180,7 +180,7 @@ class S3DISSampler(Dataset):
         # 通过这样更新possibility的方式，使得抽过的点仅有很小的可能被抽中，从而实现类似穷举的目的。
 
     def __getitem__(self, item):
-        selected_pc, selected_labels, selected_idx, cloud_ind, xyz_with_anno, labels_with_anno    = self.spatially_regular_gen(item, self.split)
+        selected_pc, selected_labels, selected_idx, cloud_ind, xyz_with_anno, labels_with_anno = self.spatially_regular_gen(item, self.split)
         return selected_pc, selected_labels, selected_idx, cloud_ind, xyz_with_anno, labels_with_anno  
 
     def __len__(self):
@@ -243,12 +243,12 @@ class S3DISSampler(Dataset):
                 # ================================================================== #
                 #            Keep the same number of labeled points per batch        #
                 # ================================================================== #
-                idx_with_anno = np.where(queried_pc_labels != self.ignored_labels[0])[0]
+                idx_with_anno = np.where(queried_pc_labels != cfg.ignored_labels[0])[0]
                 num_with_anno = len(idx_with_anno)
-                if num_with_anno > self.num_with_anno_per_batch:
-                    idx_with_anno = np.random.choice(idx_with_anno, self.num_with_anno_per_batch, replace=False)
-                elif num_with_anno < self.num_with_anno_per_batch:
-                    dup_idx = np.random.choice(idx_with_anno, self.num_with_anno_per_batch - len(idx_with_anno))
+                if num_with_anno > self.dataset.num_with_anno_per_batch:
+                    idx_with_anno = np.random.choice(idx_with_anno, self.dataset.num_with_anno_per_batch, replace=False)
+                elif num_with_anno < self.dataset.num_with_anno_per_batch:
+                    dup_idx = np.random.choice(idx_with_anno, self.dataset.num_with_anno_per_batch - len(idx_with_anno))
                     idx_with_anno = np.concatenate([idx_with_anno, dup_idx], axis=0)
                 xyz_with_anno = queried_pc_xyz[idx_with_anno]
                 labels_with_anno = queried_pc_labels[idx_with_anno]
@@ -301,7 +301,7 @@ class S3DISSampler(Dataset):
     # 这个函数是每从dataloader拿一次数据执行一次
     def collate_fn(self,batch):
 
-        selected_pc, selected_labels, selected_idx, cloud_ind, xyz_with_anno, labels_with_anno = [],[],[],[]
+        selected_pc, selected_labels, selected_idx, cloud_ind, xyz_with_anno, labels_with_anno = [],[],[],[],[],[]
         for i in range(len(batch)):
             selected_pc.append(batch[i][0])
             selected_labels.append(batch[i][1])
