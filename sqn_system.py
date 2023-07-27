@@ -2,7 +2,7 @@
 Author: BigCiLeng && bigcileng@outlook.com
 Date: 2023-07-25 11:53:45
 LastEditors: BigCiLeng && bigcileng@outlook.com
-LastEditTime: 2023-07-27 18:26:09
+LastEditTime: 2023-07-27 20:02:12
 FilePath: /SQN_pl/sqn_system.py
 Description: 
 
@@ -208,7 +208,7 @@ def train(args):
                                     save_top_k=5,
                                     )
         
-    wandb_logger = WandbLogger(project="RandLA", name=args.name)
+    wandb_logger = WandbLogger(project="SQN", name=args.name)
     system = SQN_System(hparams=args)
     trainer = pl.Trainer(
                          logger=wandb_logger,

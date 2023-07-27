@@ -3,8 +3,8 @@ TRAIN_S3DIS(){
  # @Author: BigCiLeng && bigcileng@outlook.com
  # @Date: 2023-06-20 16:43:14
  # @LastEditors: BigCiLeng && bigcileng@outlook.com
- # @LastEditTime: 2023-07-26 01:11:54
- # @FilePath: /RandLA-Net-Pytorch-New/scripts/train_S3DIS.sh
+ # @LastEditTime: 2023-07-27 18:35:10
+ # @FilePath: /SQN_pl/scripts/train_S3DIS.sh
  # @Description: 
  # 
  # Copyright (c) 2023 by bigcileng@outlook.com, All Rights Reserved. 
@@ -19,7 +19,7 @@ scheduler_gamma=0.95
 device='gpu'
 device_nums=2
 num_workers=4
-python -W ignore randla_system.py --dataset_name $dataset_name --work_type $work_type \
+python -W ignore sqn_system.py --dataset_name $dataset_name --work_type $work_type \
                 --adam_lr $adam_lr --scheduler_gamma $scheduler_gamma \
                 --device $device --device_nums $device_nums --num_workers $num_workers
 }
