@@ -2,7 +2,7 @@
 Author: BigCiLeng && bigcileng@outlook.com
 Date: 2023-07-25 11:53:45
 LastEditors: BigCiLeng && bigcileng@outlook.com
-LastEditTime: 2023-07-27 20:02:12
+LastEditTime: 2023-08-01 01:15:11
 FilePath: /SQN_pl/sqn_system.py
 Description: 
 
@@ -204,7 +204,7 @@ def train(args):
         checkpoint = ModelCheckpoint(dirpath=os.path.join(os.path.abspath(f'./ckpts/{args.name}')),
                                     filename='best',
                                     monitor='train/mean_iou',
-                                    mode='min',
+                                    mode='max',
                                     save_top_k=5,
                                     )
         
